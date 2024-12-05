@@ -1,0 +1,200 @@
+// This is your Prisma schema file
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id                String         @id @default(cuid())
+  username          String         @unique
+  password          String
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  
+  // Preferences and analysis
+  rawPreferences    String?        @db.Text
+  preferenceAnalysis Json?         // Stores the full analysis
+  expertiseLevel    ExpertiseLevel @default(BEGINNER)  // Made required with default
+  weeklyHours       Int            @default(0)         // Made required with default
+  
+  // Relations
+  interests         Interest[]
+  marketInsights    MarketInsight[]
+  courses           Course[]    
+  enrollments       Enrollment[]
+
+  @@index([username])
+  CourseFork CourseFork[]
+}
+
+model MarketTrend {
+  id          String         @id @default(cuid())
+  name        String
+  description String         @db.Text
+  confidence  Float         
+  startDate   DateTime       @default(now())
+  peakDate    DateTime?     
+  endDate     DateTime?     
+  status      TrendStatus    @default(EMERGING)
+  
+  // Relations
+  interests   Interest[]
+  courses     Course[] 
+  insights    MarketInsight[]
+
+  @@index([status])
+}
+
+model Interest {
+  id             String        @id @default(cuid())
+  name           String
+  category       String        
+  marketDemand   MarketDemand  @default(MEDIUM)  // Changed to enum
+  trendingTopics String[]      @default([])      // Added default
+  
+  // Relations
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  marketTrends   MarketTrend[]
+  courses        Course[]
+
+  @@index([userId])
+}
+
+model MarketInsight {
+  id          String          @id @default(cuid())
+  type        InsightType     @default(TREND)  // Changed to enum
+  content     String
+  
+  // Relations
+  userId      String
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  marketTrend MarketTrend[]
+
+  @@index([userId])
+}
+
+model CourseFork {
+  id              String    @id @default(cuid())
+  originalCourseId String
+  forkedCourseId   String
+  forkerId         String
+  createdAt        DateTime @default(now())
+  
+  originalCourse   Course   @relation("OriginalCourse", fields: [originalCourseId], references: [id])
+  forkedCourse     Course   @relation("ForkedCourse", fields: [forkedCourseId], references: [id])
+  forker           User     @relation(fields: [forkerId], references: [id])
+
+  @@index([originalCourseId])
+  @@index([forkedCourseId])
+  @@index([forkerId])
+}
+
+model Course {
+  id              String        @id @default(cuid())
+  title           String
+  description     String        @db.Text
+  status          CourseStatus  @default(DRAFT)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  // AI-generated metadata
+  marketRelevance Float     
+  trendAlignment  Float     
+  keyTakeaways    String[]  
+  prerequisites   String[]  
+  estimatedHours  Int       
+  
+  // Relations
+  author          User          @relation(fields: [authorId], references: [id])
+  authorId        String
+  interests       Interest[]
+  modules         Module[]
+  enrollments     Enrollment[]
+  marketTrend     MarketTrend?  @relation(fields: [trendId], references: [id])
+  trendId         String?
+  forks           CourseFork[] @relation("OriginalCourse")
+  forkedFrom      CourseFork[] @relation("ForkedCourse")
+
+  @@index([authorId])
+  @@index([status])
+}
+
+model Module {
+  id          String    @id @default(cuid())
+  title       String
+  content     String    @db.Text
+  order       Int
+  duration    Int       // Expected duration in minutes
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  // AI-generated content
+  aiGenerated Boolean   @default(false)
+  aiPrompt    String?   @db.Text
+  
+  // Relations
+  course      Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  courseId    String
+
+  @@index([courseId])
+}
+
+model Enrollment {
+  id        String           @id @default(cuid())
+  status    EnrollmentStatus @default(IN_PROGRESS)
+  progress  Float           @default(0)
+  startedAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  
+  // Relations
+  user      User            @relation(fields: [userId], references: [id])
+  userId    String
+  course    Course          @relation(fields: [courseId], references: [id])
+  courseId  String
+
+  @@unique([userId, courseId])
+  @@index([userId])
+  @@index([courseId])
+}
+
+enum CourseStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum EnrollmentStatus {
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
+}
+
+enum MarketDemand {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum InsightType {
+  TREND
+  OPPORTUNITY
+}
+
+enum TrendStatus {
+  EMERGING
+  PEAK
+  DECLINING
+  EXPIRED
+}
+
+enum ExpertiseLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
