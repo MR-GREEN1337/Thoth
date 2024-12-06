@@ -1,4 +1,3 @@
-// app/actions/preferences.ts
 import { Groq } from "groq-sdk";
 
 const groq = new Groq({
@@ -69,28 +68,83 @@ If the preferences are detailed enough, analyze them and return:
   return JSON.parse(completion.choices[0]?.message?.content || "{}");
 }
 
-// app/actions/preferences.ts
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
+import { cookies } from "next/headers";
+import { ExpertiseLevel } from "@/types/preferences";
 
 const prisma = new PrismaClient();
 
-export async function getUserPreferences(userId: string) {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    include: {
-      interests: true,
-      marketInsights: true,
-    },
-  });
+export async function getUserPreferences() {
+  try {
+    const cookieStore = await cookies();
+    const token = cookieStore.get("token")?.value;
 
-  return {
-    rawPreferences: user?.rawPreferences,
-    expertiseLevel: user?.expertiseLevel,
-    weeklyHours: user?.weeklyHours,
-    interests: user?.interests,
-    marketInsights: user?.marketInsights,
-    fullAnalysis: user?.preferenceAnalysis,
-  };
+    if (!token) {
+      throw new Error("Unauthorized");
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: token },
+      select: {
+        expertiseLevel: true,
+        weeklyHours: true,
+        preferenceAnalysis: true,
+        interests: {
+          select: {
+            id: true,
+            name: true,
+            category: true,
+            marketDemand: true,
+            trendingTopics: true,
+          }
+        },
+        marketInsights: {
+          select: {
+            id: true,
+            type: true,
+            content: true,
+          }
+        }
+      }
+    });
+
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    // Transform the data to match PreferencesOutput type
+    const preferences = {
+      isConcise: true,
+      analysis: {
+        interests: user.interests.map(interest => ({
+          name: interest.name,
+          category: interest.category,
+          marketDemand: interest.marketDemand as "High" | "Medium" | "Low",
+          trendingTopics: interest.trendingTopics || [],
+        })),
+        suggestedWeeklyHours: user.weeklyHours || 0,
+        expertiseLevel: user.expertiseLevel as "BEGINNER" | "INTERMEDIATE" | "ADVANCED" | "EXPERT",
+        recommendedStartingPoint: user.preferenceAnalysis?.recommendedStartingPoint || "",
+        marketInsights: {
+          trends: user.marketInsights
+            .filter(insight => insight.type === "TREND")
+            .map(insight => insight.content),
+          opportunities: user.marketInsights
+            .filter(insight => insight.type === "OPPORTUNITY")
+            .map(insight => insight.content),
+        }
+      }
+    };
+
+    //console.log("User preference analysis:", user.preferenceAnalysis);
+    return {
+      preferences,
+      hasCompletedOnboarding: user.preferenceAnalysis !== null
+    };
+  } catch (error) {
+    console.error("Error fetching user preferences:", error);
+    throw error;
+  }
 }
 
 export async function clearUserPreferences(userId: string) {
@@ -105,9 +159,9 @@ export async function clearUserPreferences(userId: string) {
       where: { id: userId },
       data: {
         rawPreferences: null,
-        preferenceAnalysis: null,
-        expertiseLevel: null,
-        weeklyHours: null,
+        preferenceAnalysis: Prisma.JsonNull,
+        expertiseLevel: null as unknown as ExpertiseLevel,
+        weeklyHours: 0,
       },
     });
   });

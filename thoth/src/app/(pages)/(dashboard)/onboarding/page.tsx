@@ -25,6 +25,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { toast } from "sonner";
 import SourcesSection from "./_components/SourcesSection";
 import { Category, ExpertiseLevel, SavePreferencesPayload } from "@/types/preferences";
+import Cookies from "js-cookie";
 
 interface Interest {
   category: Category;
@@ -69,7 +70,7 @@ interface ApiResponse {
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const userId = localStorage.getItem("token");
+  const userId = Cookies.get("token");
   const [preferences, setPreferences] = useState<string>("");
   const [analysis, setAnalysis] = useState<PreferencesOutput | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);

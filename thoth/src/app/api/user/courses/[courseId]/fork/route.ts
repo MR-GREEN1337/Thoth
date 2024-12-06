@@ -1,15 +1,15 @@
-// app/api/user/courses/[courseid]/fork/route.ts
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import prisma from "@/lib/prisma";
 
 export async function POST(
   req: Request,
-  { params }: { params: { courseid: string } }
+  { params }: { params: { courseId: string } }
 ) {
   try {
     const cookieStore = cookies();
     const userId = (await cookieStore).get("token")?.value;
+    const courseId = (await params).courseId;
 
     if (!userId) {
       return NextResponse.json(
@@ -21,7 +21,7 @@ export async function POST(
     // Get the original course with all necessary relations
     const originalCourse = await prisma.course.findUnique({
       where: { 
-        id: params.courseid 
+        id: courseId,
       },
       include: {
         modules: true,
@@ -43,7 +43,7 @@ export async function POST(
         authorId: userId,
         forks: {
           some: {
-            originalCourseId: params.courseid
+            originalCourseId: courseId,
           }
         }
       }
@@ -61,7 +61,7 @@ export async function POST(
       data: {
         title: `${originalCourse.title} (Fork)`,
         description: originalCourse.description,
-        status: "DRAFT", // Always start as draft
+        status: "DRAFT" as const, // Always start as draft
         marketRelevance: originalCourse.marketRelevance,
         trendAlignment: originalCourse.trendAlignment,
         keyTakeaways: originalCourse.keyTakeaways,
@@ -92,7 +92,7 @@ export async function POST(
         marketTrend: originalCourse.marketTrend 
           ? {
               connect: {
-                id: originalCourse.marketTrendId!
+                id: originalCourse.marketTrend.id
               }
             }
           : undefined,
@@ -102,7 +102,7 @@ export async function POST(
     // Create fork relationship record
     await prisma.courseFork.create({
       data: {
-        originalCourseId: params.courseid,
+        originalCourseId: courseId,
         forkedCourseId: forkedCourse.id,
         forkerId: userId,
       },

@@ -7,10 +7,21 @@ src/
 │   ├── api
 │   │   ├── analyze-preferences
 │   │   │   └── route.ts
+│   │   ├── courses
+│   │   │   └── published
+│   │   │       ├── route.ts
+│   │   │       └── search
+│   │   │           └── route.ts
 │   │   ├── save-preferences
 │   │   │   └── route.ts
 │   │   └── user
 │   │       ├── courses
+│   │       │   ├── [courseId]
+│   │       │   │   ├── fork
+│   │       │   │   │   └── route.ts
+│   │       │   │   ├── publish
+│   │       │   │   │   └── route.ts
+│   │       │   │   └── route.ts
 │   │       │   └── route.ts
 │   │       ├── generate-courses
 │   │       │   └── route.ts
@@ -22,20 +33,31 @@ src/
 │   │   └── GeistVF.woff
 │   ├── globals.css
 │   ├── layout.tsx
+│   ├── loading.tsx
 │   ├── not-found.tsx
-│   └── (pages)
-│       ├── (auth)
-│       │   ├── sign-in
-│       │   │   └── page.tsx
-│       │   └── sign-up
-│       │       └── page.tsx
-│       ├── dashboard
-│       │   └── page.tsx
-│       ├── onboarding
-│       │   ├── _components
-│       │   │   └── SourcesSection.tsx
-│       │   └── page.tsx
-│       └── page.tsx
+│   ├── (pages)
+│   │   ├── (auth)
+│   │   │   ├── sign-in
+│   │   │   │   └── page.tsx
+│   │   │   └── sign-up
+│   │   │       └── page.tsx
+│   │   └── (dashboard)
+│   │       ├── course
+│   │       │   └── [courseId]
+│   │       │       ├── _components
+│   │       │       │   └── courseClient.tsx
+│   │       │       └── page.tsx
+│   │       ├── dashboard
+│   │       │   ├── _components
+│   │       │   │   ├── CourseCard.tsx
+│   │       │   │   └── GenerateCourseDialog.tsx
+│   │       │   └── page.tsx
+│   │       ├── layout.tsx
+│   │       └── onboarding
+│   │           ├── _components
+│   │           │   └── SourcesSection.tsx
+│   │           └── page.tsx
+│   └── page.tsx
 ├── components
 │   ├── auth
 │   │   └── IntertwiningArcs.tsx
@@ -93,6 +115,8 @@ src/
 │       ├── toggle.tsx
 │       └── tooltip.tsx
 ├── hooks
+│   ├── use-community-courses.ts
+│   ├── use-debounce.ts
 │   ├── use-mobile.tsx
 │   ├── use-toast.ts
 │   └── use-user-courses.ts
@@ -100,8 +124,9 @@ src/
 │   ├── auth.ts
 │   ├── prisma.ts
 │   └── utils.ts
+├── middleware.ts
 └── types
     ├── course.ts
     └── preferences.ts
 
-26 directories, 79 files
+37 directories, 93 files

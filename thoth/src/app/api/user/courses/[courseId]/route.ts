@@ -70,3 +70,162 @@ export async function GET(
     );
   }
 }
+
+export async function DELETE(
+  req: Request,
+  { params }: { params: { courseId: string } }
+) {
+  try {
+    const cookieStore = cookies();
+    const userId = (await cookieStore).get("token")?.value;
+
+    if (!userId) {
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
+    const courseId = params.courseId;
+    const course = await prisma.course.findUnique({
+      where: { id: courseId },
+      select: { authorId: true }
+    });
+
+    if (!course) {
+      return new NextResponse("Course not found", { status: 404 });
+    }
+
+    if (course.authorId !== userId) {
+      return new NextResponse("Forbidden", { status: 403 });
+    }
+
+    // Delete the course and all related data
+    await prisma.course.delete({
+      where: { id: courseId }
+    });
+
+    return new NextResponse(null, { status: 204 });
+  } catch (error) {
+    console.error("[COURSE_DELETE]", error);
+    return new NextResponse("Internal Error", { status: 500 });
+  }
+}
+
+export async function PATCH(
+  req: Request,
+  { params }: { params: { courseId: string } }
+) {
+  try {
+    const cookieStore = cookies();
+    const userId = (await cookieStore).get("token")?.value;
+    const courseId = (await params).courseId;
+  
+    if (!userId) {
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
+    const course = await prisma.course.findUnique({
+      where: { id: courseId },
+      select: { authorId: true }
+    });
+
+    if (!course) {
+      return NextResponse.json(
+        { error: "Course not found" },
+        { status: 404 }
+      );
+    }
+
+    if (course.authorId !== userId) {
+      return NextResponse.json(
+        { error: "Forbidden - only the course author can modify this course" },
+        { status: 403 }
+      );
+    }
+
+    const body = await req.json();
+    const allowedFields = [
+      'title',
+      'description',
+      'status',
+      'marketRelevance',
+      'trendAlignment',
+      'keyTakeaways',
+      'prerequisites',
+      'estimatedHours'
+    ];
+
+    // Filter out any fields that aren't in the allowedFields list
+    const updateData = Object.keys(body).reduce((acc, key) => {
+      if (allowedFields.includes(key)) {
+        acc[key] = body[key];
+      }
+      return acc;
+    }, {} as Record<string, any>);
+
+    // Validate required fields if they're being updated
+    if (updateData.title && typeof updateData.title !== 'string') {
+      return NextResponse.json(
+        { error: "Title must be a string" },
+        { status: 400 }
+      );
+    }
+
+    if (updateData.status && !['DRAFT', 'PUBLISHED', 'ARCHIVED'].includes(updateData.status)) {
+      return NextResponse.json(
+        { error: "Invalid status value" },
+        { status: 400 }
+      );
+    }
+
+    if (updateData.marketRelevance && (
+      typeof updateData.marketRelevance !== 'number' ||
+      updateData.marketRelevance < 0 ||
+      updateData.marketRelevance > 1
+    )) {
+      return NextResponse.json(
+        { error: "Market relevance must be a number between 0 and 1" },
+        { status: 400 }
+      );
+    }
+
+    // Update the course
+    const updatedCourse = await prisma.course.update({
+      where: { id: courseId },
+      data: updateData,
+      include: {
+        modules: {
+          orderBy: { order: 'asc' }
+        },
+        author: {
+          select: {
+            id: true,
+            username: true,
+          }
+        },
+        _count: {
+          select: {
+            enrollments: true,
+            forks: true,
+          }
+        }
+      }
+    });
+
+    return NextResponse.json({
+      ...updatedCourse,
+      enrollments: updatedCourse._count.enrollments,
+      forks: updatedCourse._count.forks,
+    });
+  } catch (error) {
+    console.error("[COURSE_PATCH]", error);
+    return NextResponse.json(
+      { error: "Failed to update course" },
+      { status: 500 }
+    );
+  }
+}

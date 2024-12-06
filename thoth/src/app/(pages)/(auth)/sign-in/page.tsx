@@ -39,9 +39,8 @@ export default function SignInPage() {
         throw new Error(result.error || "Failed to sign in");
       }
       console.log(result)
-      // set userId as localStorage token
+      // set userId as cookie token
       if (result.userId) {
-        localStorage.setItem("token", result.userId);
         Cookies.set("token", result.userId);
       }
       return result;

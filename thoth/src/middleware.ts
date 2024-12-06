@@ -3,9 +3,9 @@ import type { NextRequest } from 'next/server'
  
 // Configure which paths require authentication
 const protectedPaths = [
-  '/dashboard',
-  '/profile',
-  '/settings'
+  'dashboard',
+  'course',
+  'onboarding'
 ]
 
 // Configure public paths that should bypass authentication
@@ -18,6 +18,12 @@ const publicPaths = [
  
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
+  const token = request.cookies.get('token')?.value
+  
+  // If user is authenticated and tries to access sign-in, redirect to dashboard
+  if (pathname === '/sign-in' && token) {
+    return NextResponse.redirect(new URL('/dashboard', request.url))
+  }
   
   // Check if the path is public
   if (publicPaths.some(path => pathname.startsWith(path))) {
@@ -30,9 +36,6 @@ export function middleware(request: NextRequest) {
   if (!isProtectedPath) {
     return NextResponse.next()
   }
-
-  // Get the token from cookies
-  const token = request.cookies.get('token')?.value
   
   // If no token is present, redirect to login
   if (!token) {

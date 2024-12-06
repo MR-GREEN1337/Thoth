@@ -31,6 +31,8 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
+import FloatingEditor from "./EditableSection";
+import Cookies from "js-cookie";
 
 interface Module {
   id: string;
@@ -59,10 +61,21 @@ interface Course {
   };
   enrollments?: number;
   forks?: number;
+  isCommunity?: boolean;
+  ownerId?: string;
+}
+
+interface FloatingEditorProps {
+  content: string;
+  onSave: (content: string) => Promise<void>;
+  children?: React.ReactNode;
+  type?: "markdown" | "text";
+  course: Course;
+  currentUserId?: string;
 }
 
 interface CourseClientProps {
-  initialCourse: Course | null;
+  initialCourse: Course;
 }
 
 export function CourseClient({ initialCourse }: CourseClientProps) {
@@ -71,6 +84,11 @@ export function CourseClient({ initialCourse }: CourseClientProps) {
     initialCourse?.modules[0]?.id || null
   );
   const [isForking, setIsForking] = useState(false);
+  const canEdit = initialCourse.author.id === Cookies.get("token"); // can modify only if course belongs to user
+
+  console.log(initialCourse);
+  console.log(Cookies.get("token"));
+  console.log(canEdit);
 
   if (!initialCourse) {
     return (
@@ -107,7 +125,7 @@ export function CourseClient({ initialCourse }: CourseClientProps) {
 
       const forkedCourse = await response.json();
       toast.success("Course forked successfully!");
-      router.push(`/courses/${forkedCourse.id}`);
+      router.push(`/course/${forkedCourse.id}`);
     } catch (error: any) {
       console.error("Error forking course:", error);
       toast.error(error.message || "Failed to fork course");
@@ -126,10 +144,47 @@ export function CourseClient({ initialCourse }: CourseClientProps) {
         {/* Course Header */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2">
-            <h1 className="text-3xl font-bold text-white mb-4">
-              {initialCourse.title}
-            </h1>
-            <p className="text-gray-400 mb-6">{initialCourse.description}</p>
+            {canEdit ? (
+              <FloatingEditor
+                key={initialCourse.title}
+                content={initialCourse.title}
+                onSave={async (newTitle) => {
+                  await fetch(`/api/user/courses/${initialCourse.id}`, {
+                    method: "PATCH",
+                    body: JSON.stringify({ title: newTitle }),
+                  });
+                }}
+                course={initialCourse}
+              >
+                <h1 className="text-3xl font-bold text-white mb-4">
+                  {initialCourse.title}
+                </h1>
+              </FloatingEditor>
+            ) : (
+              <h1 className="text-3xl font-bold text-white mb-4">
+                {initialCourse.title}
+              </h1>
+            )}
+
+            {canEdit ? (
+              <FloatingEditor
+                key={initialCourse.description}
+                content={initialCourse.description}
+                onSave={async (newDescription) => {
+                  await fetch(`/api/user/courses/${initialCourse.id}`, {
+                    method: "PATCH",
+                    body: JSON.stringify({ description: newDescription }),
+                  });
+                }}
+                course={initialCourse}
+              >
+                <p className="text-gray-400 mb-6">
+                  {initialCourse.description}
+                </p>
+              </FloatingEditor>
+            ) : (
+              <p className="text-gray-400 mb-6">{initialCourse.description}</p>
+            )}
 
             <div className="flex flex-wrap gap-2 mb-6">
               <Badge

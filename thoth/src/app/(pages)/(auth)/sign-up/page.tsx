@@ -77,8 +77,7 @@ export default function SignUpPage() {
       formData.append("rawPreferences", preferences);
 
       const userResult = await signUpAction(formData);
-      // Set userId as localstorage token
-      localStorage.setItem("token", userResult.userId);
+      // Set userId as cookie token
       Cookies.set("token", userResult.userId);
       // Redirect to dashboard
       router.push("/onboarding");

@@ -1,5 +1,3 @@
-// src/lib/auth.ts
-
 import { cookies } from "next/headers";
 import { type NextRequest } from "next/server";
 
@@ -36,7 +34,6 @@ export const getUserId = async () => {
   return tokenData.userId;
 };
 
-// Get user ID from request (for middleware)
 export const getUserIdFromRequest = (request: NextRequest): string | null => {
   const token = request.cookies.get(TOKEN_NAME)?.value;
   
@@ -48,17 +45,22 @@ export const getUserIdFromRequest = (request: NextRequest): string | null => {
   return tokenData.userId;
 };
 
-// Client-side functions
-export const setAuthToken = (token: string) => {
-  document.cookie = `${TOKEN_NAME}=${token}; path=/; max-age=${TOKEN_MAX_AGE}; SameSite=Lax`;
-};
-
-export const clearAuthToken = () => {
-  document.cookie = `${TOKEN_NAME}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
-};
 
 export const getAuthToken = (): string | null => {
   const cookies = document.cookie.split(';');
   const tokenCookie = cookies.find(cookie => cookie.trim().startsWith(`${TOKEN_NAME}=`));
   return tokenCookie ? tokenCookie.split('=')[1] : null;
 };
+
+import { redirect } from 'next/navigation'
+
+export async function checkAuth() {
+  const cookieStore = await cookies()
+  const token = cookieStore.get('token')
+  
+  if (!token) {
+    redirect('/sign-in')
+  }
+
+  return token.value
+}
