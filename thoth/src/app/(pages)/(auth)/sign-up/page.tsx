@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Loader2, Sparkles, ArrowLeft, AlertCircle } from "lucide-react";
+import { Loader2, Sparkles, ArrowLeft, AlertCircle, Book } from "lucide-react";
 import Link from "next/link";
 import {
   Card,
@@ -22,7 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { IntertwiningArcs } from "@/components/auth/IntertwiningArcs";
 import Logo from "@/components/global/logo";
 import { checkUsername, signUp, signUpAction } from "@/app/actions/auth";
-import Cookies from "js-cookie"
+import Cookies from "js-cookie";
 
 export default function SignUpPage() {
   const [username, setUsername] = useState("");
@@ -113,10 +113,10 @@ export default function SignUpPage() {
                 <Logo className="mb-4" variant="auth" />
               </a>
               <CardTitle className="text-2xl md:text-3xl text-white">
-                Create your account
+                Join Thoth
               </CardTitle>
               <CardDescription className="text-gray-400">
-                Start your journey in creating AI-powered courses
+                Be part of the future of AI-powered education
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -133,7 +133,7 @@ export default function SignUpPage() {
                   <div className="relative">
                     <Input
                       id="username"
-                      placeholder="your_username"
+                      placeholder="educator_username"
                       value={username}
                       onChange={(e) => {
                         setUsername(e.target.value);
@@ -176,11 +176,11 @@ export default function SignUpPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="preferences" className="text-gray-300">
-                    Your Interests (Optional)
+                    Your Teaching & Learning Interests (optional)
                   </Label>
                   <Textarea
                     id="preferences"
-                    placeholder="Tell us about your interests and what you'd like to teach or learn..."
+                    placeholder="What topics are you passionate about? What emerging fields interest you? What would you like to teach or learn?"
                     value={preferences}
                     onChange={(e) => setPreferences(e.target.value)}
                     className="bg-gray-900/50 border-gray-800 text-white min-h-[100px]"
@@ -194,8 +194,8 @@ export default function SignUpPage() {
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   ) : (
                     <>
-                      <Sparkles className="mr-2 h-4 w-4" />
-                      Create Account
+                      <Book className="mr-2 h-4 w-4" />
+                      Start Your Journey
                     </>
                   )}
                 </Button>
@@ -208,7 +208,7 @@ export default function SignUpPage() {
                   href="/sign-in"
                   className="text-blue-400 hover:text-blue-300"
                 >
-                  Sign in
+                  Return to your courses
                 </Link>
               </p>
             </CardFooter>
@@ -234,18 +234,20 @@ export default function SignUpPage() {
                 transition={{ delay: 0.4 }}
               >
                 <h2 className="text-xl md:text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-                  Create & Share Knowledge
+                  Democratize Knowledge
                 </h2>
                 <p className="text-gray-400 mt-2 text-sm md:text-base">
-                  Build AI-powered courses and help others learn
+                  Create courses that evolve with AI and community insights
                 </p>
               </motion.div>
 
               {[
-                "AI-Powered Course Creation",
-                "Market Trend Analysis",
-                "Personalized Learning",
-                "Community Insights",
+                "AI-Powered Course Generation",
+                "Real-time Market Alignment",
+                "Git-inspired Knowledge Evolution",
+                "Specialized Content Creation",
+                "Community-Driven Improvement",
+                "Dynamic Learning Paths",
               ].map((feature, index) => (
                 <motion.div
                   key={feature}

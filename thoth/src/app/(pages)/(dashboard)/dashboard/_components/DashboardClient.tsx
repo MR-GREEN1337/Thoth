@@ -133,7 +133,7 @@ export default function DashboardClient({ initialPreferences }: DashboardClientP
 
   // Generate Courses Mutation
   const generateMutation = useMutation({
-    mutationFn: async (analysis: string) => {
+    mutationFn: async (analysis: any) => {
       const response = await fetch("/api/user/generate-courses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -150,6 +150,7 @@ export default function DashboardClient({ initialPreferences }: DashboardClientP
         id: "generate",
       })
       queryClient.invalidateQueries({ queryKey: ["userCourses"] })
+      router.refresh()
     },
     onError: () => {
       toast.error("❌ Failed to generate learning path", { id: "generate" })

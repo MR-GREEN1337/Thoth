@@ -22,7 +22,7 @@ import rehypeKatex from "rehype-katex";
 import { toast } from "sonner";
 import Draggable from "react-draggable";
 import { Groq } from "groq-sdk";
-import { generateSuggestions } from "@/app/actions/generate-suggestion";
+import { AISuggestionError, generateSuggestions } from "@/app/actions/generate-suggestion";
 import { useMutation } from "@tanstack/react-query";
 
 interface AiSuggestContext {
@@ -99,107 +99,230 @@ const FloatingButton = React.memo<FloatingButtonProps>(
 FloatingButton.displayName = "FloatingButton";
 
 
+interface AiSuggestionsPanelProps {
+  onClose: () => void;
+  onApply: (suggestion: string) => void;
+  context: AiSuggestContext;
+}
+
 const AiSuggestionsPanel: React.FC<AiSuggestionsPanelProps> = ({
-    onClose,
-    onApply,
-    context
-  }) => {
-    const [prompt, setPrompt] = useState("");
-  
-    const suggestionsMutation = useMutation({
-      mutationFn: async (prompt: string) => {
-        return generateSuggestions(prompt, context);
-      },
-      onSuccess: (suggestions) => {
-        setSuggestions(suggestions);
-      },
-      onError: (error) => {
-        toast.error(error instanceof Error ? error.message : "Failed to get AI suggestions");
+  onClose,
+  onApply,
+  context
+}) => {
+  const [prompt, setPrompt] = useState("");
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
+  const [error, setError] = useState<{
+    message: string;
+    code: string;
+    canRetry: boolean;
+  } | null>(null);
+
+  const suggestionsMutation = useMutation({
+    mutationFn: async (prompt: string) => {
+      setError(null);
+      try {
+        const result = await generateSuggestions(prompt, context);
+        if (!result || !Array.isArray(result)) {
+          throw new Error('Invalid response format');
+        }
+        return result;
+      } catch (error) {
+        if (error instanceof AISuggestionError) {
+          setError({
+            message: (error as any).message,
+            code: (error as any).code,
+            canRetry: (error as any).shouldRetry
+          });
+        } else {
+          setError({
+            message: 'An unexpected error occurred',
+            code: 'UNKNOWN_ERROR',
+            canRetry: true
+          });
+        }
+        throw error;
       }
-    });
-  
-    const [suggestions, setSuggestions] = useState<string[]>([]);
-  
-    const handleSuggest = () => {
+    },
+    onSuccess: (suggestions) => {
+      setSuggestions(suggestions.map(s => s.content));
+      setSelectedVersion(null);
+      setError(null);
+    },
+    onError: (error) => {
+      // Error state is already set in mutationFn
+      if (!error || !(error instanceof AISuggestionError)) {
+        toast.error("Failed to generate suggestions");
+      }
+    }
+  });
+
+  const handleApply = (suggestion: string, version: number) => {
+    setSelectedVersion(version);
+    onApply(suggestion);
+  };
+
+  const handleRetry = () => {
+    if (prompt) {
       suggestionsMutation.mutate(prompt);
-    };
-  
+    }
+  };
+
+  const getErrorMessage = (code: string): string => {
+    switch (code) {
+      case 'SERVICE_ERROR':
+        return 'AI service is temporarily unavailable';
+      case 'CONFIG_ERROR':
+        return 'AI service is not properly configured';
+      case 'VALIDATION_ERROR':
+        return 'Invalid input provided';
+      case 'INIT_ERROR':
+        return 'Failed to initialize AI service';
+      default:
+        return 'An unexpected error occurred';
+    }
+  };
+
+  const renderError = () => {
+    if (!error) return null;
+
     return (
       <motion.div
-        initial={{ opacity: 0, x: 300 }}
-        animate={{ opacity: 1, x: 0 }}
-        exit={{ opacity: 0, x: 300 }}
-        className={cn(
-          "fixed right-0 top-0 h-full w-96 bg-gray-900/95 border-l border-gray-700/50",
-          "shadow-xl backdrop-blur-sm p-6 overflow-y-auto z-50"
-        )}
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-red-900/20 border border-red-700/50 rounded-lg p-4 mb-4"
       >
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-medium text-gray-200">AI Assistant</h3>
-            <Button size="sm" variant="ghost" onClick={onClose}>
-              <X className="h-4 w-4" />
-            </Button>
+        <div className="flex items-start space-x-3">
+          <X className="h-5 w-5 text-red-400 mt-0.5" />
+          <div className="flex-1">
+            <h4 className="text-sm font-medium text-red-300">
+              {getErrorMessage(error.code)}
+            </h4>
+            <p className="text-xs text-red-400 mt-1">
+              {error.message}
+            </p>
+            {error.canRetry && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRetry}
+                disabled={suggestionsMutation.isPending}
+                className="mt-2 border-red-700 hover:bg-red-900/20"
+              >
+                <RotateCcw className="h-3 w-3 mr-2" />
+                Try Again
+              </Button>
+            )}
           </div>
-  
-          <div className="space-y-2">
-            <label className="text-sm text-gray-400">
-              How should I improve this?
-            </label>
-            <Textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="E.g., Make it more concise, add examples..."
-              className="bg-gray-800/50 border-gray-700 min-h-[100px]"
-            />
-            <Button
-              onClick={handleSuggest}
-              className="w-full"
-              disabled={suggestionsMutation.isPending}
+        </div>
+      </motion.div>
+    );
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: 300 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 300 }}
+      className={cn(
+        "fixed right-0 top-0 h-full w-96 bg-gray-900/95 border-l border-gray-700/50",
+        "shadow-xl backdrop-blur-sm p-6 overflow-y-auto z-50"
+      )}
+    >
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-medium text-gray-200">AI Assistant</h3>
+          <Button size="sm" variant="ghost" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        {renderError()}
+
+        <div className="space-y-2">
+          <label className="text-sm text-gray-400">
+            How should I improve this?
+          </label>
+          <Textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="E.g., Make it more concise, add examples..."
+            className="bg-gray-800/50 border-gray-700 min-h-[100px]"
+          />
+          <Button
+            onClick={() => suggestionsMutation.mutate(prompt)}
+            className="w-full"
+            disabled={suggestionsMutation.isPending}
+          >
+            {suggestionsMutation.isPending ? (
+              <motion.div
+                animate={{ rotate: 360 }}
+                transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+              >
+                <Sparkles className="h-4 w-4 mr-2" />
+              </motion.div>
+            ) : (
+              <Wand2 className="h-4 w-4 mr-2" />
+            )}
+            {suggestionsMutation.isPending ? "Thinking..." : "Get Suggestions"}
+          </Button>
+        </div>
+
+        <AnimatePresence mode="wait">
+          {suggestions.length > 0 && !error && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-4"
             >
-              {suggestionsMutation.isPending ? (
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                >
-                  <Sparkles className="h-4 w-4 mr-2" />
-                </motion.div>
-              ) : (
-                <Wand2 className="h-4 w-4 mr-2" />
-              )}
-              {suggestionsMutation.isPending ? "Thinking..." : "Get Suggestions"}
-            </Button>
-          </div>
-  
-          {suggestions.length > 0 && (
-            <div className="space-y-4">
               {suggestions.map((suggestion, index) => (
                 <motion.div
                   key={`suggestion-${index}`}
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: index * 0.1 }}
-                  className="p-4 bg-gray-800/50 rounded-lg"
+                  className={cn(
+                    "p-4 rounded-lg",
+                    selectedVersion === index 
+                      ? "bg-gray-700/50 border-2 border-gray-600" 
+                      : "bg-gray-800/50"
+                  )}
                 >
-                  <div className="prose prose-invert max-w-none">
-                    <ReactMarkdown>{suggestion}</ReactMarkdown>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-gray-400">
+                      Version {index + 1}
+                    </span>
+                    <Button
+                      variant={selectedVersion === index ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => handleApply(suggestion, index)}
+                    >
+                      {selectedVersion === index ? (
+                        <>
+                          <Check className="h-4 w-4 mr-1" />
+                          Selected
+                        </>
+                      ) : (
+                        "Use This Version"
+                      )}
+                    </Button>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="mt-2"
-                    onClick={() => onApply(suggestion)}
-                  >
-                    Use This Version
-                  </Button>
+                  <div className="prose prose-invert max-w-none">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {suggestion}
+                    </ReactMarkdown>
+                  </div>
                 </motion.div>
               ))}
-            </div>
+            </motion.div>
           )}
-        </div>
-      </motion.div>
-    );
-  };
+        </AnimatePresence>
+      </div>
+    </motion.div>
+  );
+};
 
 const FloatingToolbar = React.forwardRef<HTMLDivElement, FloatingToolbarProps>(
   ({ children, position = "bottom" }, ref) => (

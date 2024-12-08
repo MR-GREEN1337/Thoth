@@ -18,7 +18,7 @@ export async function GET(
     }
 
     const course = await prisma.course.findUnique({
-      where: { id: params.courseId },
+      where: { id: (await params).courseId },
       include: {
         modules: {
           orderBy: { order: 'asc' }
@@ -51,7 +51,7 @@ export async function GET(
       where: {
         userId_courseId: {
           userId,
-          courseId: params.courseId
+          courseId: (await params).courseId
         }
       }
     });
@@ -76,39 +76,99 @@ export async function DELETE(
   { params }: { params: { courseId: string } }
 ) {
   try {
-    const cookieStore = cookies();
-    const userId = (await cookieStore).get("token")?.value;
+    const cookieStore = await cookies();
+    const token = cookieStore.get("token");
 
-    if (!userId) {
+    if (!token?.value) {
       return NextResponse.json(
         { error: "Unauthorized" },
         { status: 401 }
       );
     }
 
+    const userId = token.value;
     const courseId = params.courseId;
+
+    // Verify course exists and user owns it
     const course = await prisma.course.findUnique({
       where: { id: courseId },
-      select: { authorId: true }
+      select: { 
+        id: true,
+        authorId: true,
+        modules: true,
+        enrollments: true,
+        CourseMessage: true,
+        forks: true,
+        forkedFrom: true
+      }
     });
 
     if (!course) {
-      return new NextResponse("Course not found", { status: 404 });
+      return NextResponse.json(
+        { error: "Course not found" },
+        { status: 404 }
+      );
     }
 
     if (course.authorId !== userId) {
-      return new NextResponse("Forbidden", { status: 403 });
+      return NextResponse.json(
+        { error: "You are not authorized to delete this course" },
+        { status: 403 }
+      );
     }
 
-    // Delete the course and all related data
-    await prisma.course.delete({
-      where: { id: courseId }
+    // Delete all related data in the correct order to handle foreign key constraints
+    await prisma.$transaction(async (tx) => {
+      // Delete course messages first
+      if (course.CourseMessage.length > 0) {
+        await tx.courseMessage.deleteMany({
+          where: { courseId: course.id }
+        });
+      }
+
+      // Delete enrollments
+      if (course.enrollments.length > 0) {
+        await tx.enrollment.deleteMany({
+          where: { courseId: course.id }
+        });
+      }
+
+      // Handle course forks
+      if (course.forks.length > 0) {
+        await tx.courseFork.deleteMany({
+          where: { originalCourseId: course.id }
+        });
+      }
+
+      if (course.forkedFrom.length > 0) {
+        await tx.courseFork.deleteMany({
+          where: { forkedCourseId: course.id }
+        });
+      }
+
+      // Delete modules
+      if (course.modules.length > 0) {
+        await tx.module.deleteMany({
+          where: { courseId: course.id }
+        });
+      }
+
+      // Finally delete the course itself
+      await tx.course.delete({
+        where: { id: course.id }
+      });
     });
 
-    return new NextResponse(null, { status: 204 });
+    return NextResponse.json(
+      { message: "Course deleted successfully" },
+      { status: 200 }
+    );
   } catch (error) {
     console.error("[COURSE_DELETE]", error);
-    return new NextResponse("Internal Error", { status: 500 });
+    return NextResponse.json(
+      { error: "An error occurred while deleting the course" },
+      { status: 500 }
+    );
   }
 }
 

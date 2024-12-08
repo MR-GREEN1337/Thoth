@@ -29,6 +29,7 @@ model User {
 
   @@index([username])
   CourseFork CourseFork[]
+  CourseMessage CourseMessage[]
 }
 
 model MarketTrend {
@@ -122,6 +123,7 @@ model Course {
 
   @@index([authorId])
   @@index([status])
+  CourseMessage CourseMessage[]
 }
 
 model Module {
@@ -136,6 +138,12 @@ model Module {
   // AI-generated content
   aiGenerated Boolean   @default(false)
   aiPrompt    String?   @db.Text
+  
+  // Enhanced tracking and quality metrics
+  qualityScore Float?   // Score from 0-1
+  revisionHistory Json? // Array of previous versions
+  searchResults  Json?  // Stored search results
+  youtubeUrls   String[] // Array of YouTube URLs
   
   // Relations
   course      Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
@@ -161,6 +169,30 @@ model Enrollment {
   @@index([userId])
   @@index([courseId])
 }
+
+model CourseMessage {
+  id        String   @id @default(cuid())
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  isAI      Boolean  @default(false)
+  
+  // Relations
+  courseId  String
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // For threading/replies
+  parentId  String?
+  parent    CourseMessage?  @relation("MessageReplies", fields: [parentId], references: [id])
+  replies   CourseMessage[] @relation("MessageReplies")
+
+  @@index([courseId])
+  @@index([userId])
+  @@index([parentId])
+}
+
 
 enum CourseStatus {
   DRAFT

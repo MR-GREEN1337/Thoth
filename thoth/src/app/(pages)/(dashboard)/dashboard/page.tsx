@@ -13,13 +13,14 @@ export default async function DashboardPage() {
       redirect('/onboarding')
     }
 
+    //console.log(preferences)
     return (
       <DashboardClient
-        initialPreferences={preferences}
+        initialPreferences={preferences as any}
       />
     )
   } catch (error) {
-    if (error.message === "User not found") {
+    if ((error as any).message === "User not found") {
       redirect('/onboarding')
     }
     throw error

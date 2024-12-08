@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Loader2, Sparkles, ArrowLeft } from "lucide-react";
+import { Loader2, Book, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { useMutation } from "@tanstack/react-query";
 import {
@@ -38,8 +38,6 @@ export default function SignInPage() {
       if (!result.success) {
         throw new Error(result.error || "Failed to sign in");
       }
-      console.log(result)
-      // set userId as cookie token
       if (result.userId) {
         Cookies.set("token", result.userId);
       }
@@ -80,10 +78,10 @@ export default function SignInPage() {
                 <Logo className="mb-4" variant="auth" />
               </a>
               <CardTitle className="text-2xl md:text-3xl text-white">
-                Welcome back
+                Welcome to Thoth
               </CardTitle>
               <CardDescription className="text-gray-400">
-                Continue your journey in the hackathon
+                Continue your journey in democratizing education
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -101,7 +99,7 @@ export default function SignInPage() {
                   </Label>
                   <Input
                     id="username"
-                    placeholder="hackathon_user"
+                    placeholder="educator_name"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     required
@@ -129,7 +127,7 @@ export default function SignInPage() {
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   ) : (
                     <>
-                      <Sparkles className="mr-2 h-4 w-4" />
+                      <Book className="mr-2 h-4 w-4" />
                       Sign In
                     </>
                   )}
@@ -140,7 +138,7 @@ export default function SignInPage() {
               <p className="text-sm text-gray-400">
                 Don't have an account?{" "}
                 <Link href="/sign-up" className="text-blue-400 hover:text-blue-300">
-                  Sign up
+                  Join the knowledge evolution
                 </Link>
               </p>
             </CardFooter>
@@ -166,18 +164,18 @@ export default function SignInPage() {
                 transition={{ delay: 0.4 }}
               >
                 <h2 className="text-xl md:text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-                  Hackathon Hub
+                  AI-Powered Education
                 </h2>
                 <p className="text-gray-400 mt-2 text-sm md:text-base">
-                  Join fellow hackers in building amazing projects
+                  Create and evolve courses with cutting-edge AI technology
                 </p>
               </motion.div>
 
               {[
-                "Project Collaboration",
-                "Real-time Updates",
-                "Team Formation",
-                "Resource Sharing",
+                "Intelligent Course Generation",
+                "Real-time Market Alignment",
+                "Community-Driven Evolution",
+                "Specialized Content Creation",
               ].map((feature, index) => (
                 <motion.div
                   key={feature}

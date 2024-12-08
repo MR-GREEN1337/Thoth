@@ -89,6 +89,7 @@ export async function getUserPreferences() {
         expertiseLevel: true,
         weeklyHours: true,
         preferenceAnalysis: true,
+        rawPreferences: true, // Add this to select raw preferences
         interests: {
           select: {
             id: true,
@@ -133,10 +134,11 @@ export async function getUserPreferences() {
             .filter(insight => insight.type === "OPPORTUNITY")
             .map(insight => insight.content),
         }
-      }
+      },
+      // Include the full preference analysis
+      preferenceAnalysis: user.preferenceAnalysis
     };
 
-    //console.log("User preference analysis:", user.preferenceAnalysis);
     return {
       preferences,
       hasCompletedOnboarding: user.preferenceAnalysis !== null

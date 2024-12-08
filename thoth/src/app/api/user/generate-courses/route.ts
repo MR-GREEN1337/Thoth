@@ -6,6 +6,8 @@ import { Annotation } from "@langchain/langgraph";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { cookies } from "next/headers";
+import { WikipediaQueryRun } from "@langchain/community/tools/wikipedia_query_run";
+import { GithubRepoLoader } from "@langchain/community/document_loaders/web/github";
 
 // Initialize API clients
 const groq = new Groq({
@@ -13,8 +15,9 @@ const groq = new Groq({
 });
 
 const tavilyTool = new TavilySearchResults({ maxResults: 5 });
+const wikipediaTool = new WikipediaQueryRun();
 
-// Enhanced Schema Definitions
+// Enhanced Schema Definitions with new fields for subject-specific content
 const ModuleSchema = z.object({
   title: z.string(),
   content: z.string(),
@@ -25,8 +28,23 @@ const ModuleSchema = z.object({
   searchResults: z.array(z.any()).optional(),
   qualityScore: z.number().optional(),
   revisionHistory: z.array(z.string()).optional(),
+  contentType: z.enum(["MARKDOWN", "LATEX", "CODE", "MIXED"]).optional(),
+  codeExamples: z.array(z.object({
+    language: z.string(),
+    code: z.string(),
+    explanation: z.string()
+  })).optional(),
+  latexContent: z.array(z.object({
+    equation: z.string(),
+    explanation: z.string(),
+    context: z.string()
+  })).optional(),
+  interactiveElements: z.array(z.object({
+    type: z.string(),
+    content: z.string(),
+    solution: z.string().optional()
+  })).optional()
 });
-
 const CourseSchema = z.object({
   title: z.string(),
   description: z.string(),
@@ -42,6 +60,507 @@ const CourseSchema = z.object({
   qualityMetrics: z.record(z.number()).optional(),
 });
 
+interface GitHubRepo {
+  url: string;
+  name: string;
+  description: string;
+  language: string;
+  stars: number;
+}
+
+class SearchResultsHandler {
+  static normalizeSearchResults(results: any): any[] {
+    try {
+      // If already null/undefined, return empty array
+      if (!results) {
+        return [];
+      }
+
+      // If already an array of objects with required fields, validate and clean
+      if (Array.isArray(results)) {
+        return results.map(result => ({
+          url: String(result.url || ''),
+          title: String(result.title || ''),
+          content: String(result.content || ''),
+          score: Number(result.score || 0)
+        })).filter(result => result.url && result.title);
+      }
+
+      // If string, try to parse it
+      if (typeof results === 'string') {
+        try {
+          const parsed = JSON.parse(results);
+          return this.normalizeSearchResults(parsed);
+        } catch {
+          console.warn('Failed to parse search results string');
+          return [];
+        }
+      }
+
+      // If single object, wrap in array
+      if (typeof results === 'object' && !Array.isArray(results)) {
+        return this.normalizeSearchResults([results]);
+      }
+
+      return [];
+    } catch (error) {
+      console.error('Search results normalization failed:', error);
+      return [];
+    }
+  }
+
+  static cleanJsonResponse(text: string): string {
+    if (!text || typeof text !== 'string') {
+        return '{}';
+    }
+
+    try {
+        // Remove markdown code block markers and language indicators
+        let cleaned = text.replace(/^```(?:json)?\s*|\s*```$/g, '');
+
+        // Enhanced cleaning
+        cleaned = cleaned
+            .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // Remove control characters
+            .replace(/\\(?!["\\/bfnrt])/g, '\\\\')  // Fix invalid escape sequences
+            .replace(/[\u201C\u201D]/g, '"')  // Fix smart quotes
+            .replace(/[\u2018\u2019]/g, "'")  // Fix smart single quotes
+            .replace(/(\r\n|\n|\r)/gm, '')    // Remove newlines
+            .replace(/\s+/g, ' ')             // Normalize whitespace
+            .trim();
+
+        // More robust JSON object extraction
+        const jsonMatch = cleaned.match(/(\{[\s\S]*\})/);
+        if (jsonMatch) {
+            cleaned = jsonMatch[1];
+            // Validate structure by counting braces
+            let openBraces = 0;
+            let isValid = true;
+            for (let char of cleaned) {
+                if (char === '{') openBraces++;
+                if (char === '}') openBraces--;
+                if (openBraces < 0) {
+                    isValid = false;
+                    break;
+                }
+            }
+            if (!isValid || openBraces !== 0) {
+                throw new Error('Unbalanced braces in JSON');
+            }
+        }
+
+        // Test parse
+        JSON.parse(cleaned);
+        return cleaned;
+    } catch (error) {
+        console.error('JSON cleaning failed:', error);
+        console.error('Original text:\n', text);
+        return '{}';
+    }
+}
+
+static safeParseJson<T>(text: string, context: string = ''): T | null {
+    try {
+        const cleaned = this.cleanJsonResponse(text);
+        
+        // Additional validation for empty or invalid JSON
+        if (cleaned === '{}' || !cleaned) {
+            console.error(`Empty or invalid JSON for ${context}`);
+            return null;
+        }
+
+        const parsed = JSON.parse(cleaned) as T;
+        
+        // Basic structure validation
+        if (!parsed || typeof parsed !== 'object') {
+            throw new Error('Parsed result is not an object');
+        }
+
+        return parsed;
+    } catch (error) {
+        console.error(`JSON parsing failed for ${context}:`, error);
+        console.error('Original text:', text);
+        return null;
+    }
+}
+}
+
+// Content type detection and processing functions
+class ContentTypeDetector {
+  private static extractJSON(text: string, context: string = ""): any {
+    if (!text || typeof text !== "string") {
+      console.warn(`Empty or invalid input for JSON parsing: ${context}`);
+      return null;
+    }
+
+    // Clean up the text
+    const cleanedText = text.trim();
+
+    // Define parsing strategies
+    const strategies = [
+      // Strategy 1: Direct parse
+      (input: string) => {
+        try {
+          return JSON.parse(input);
+        } catch (e) {
+          return null;
+        }
+      },
+      // Strategy 2: Find JSON between code blocks
+      (input: string) => {
+        const matches = input.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+        if (matches?.[1]) {
+          try {
+            return JSON.parse(matches[1].trim());
+          } catch (e) {
+            return null;
+          }
+        }
+        return null;
+      },
+      // Strategy 3: Find first JSON-like structure
+      (input: string) => {
+        const matches = input.match(/{[\s\S]*?}/);
+        if (matches?.[0]) {
+          try {
+            return JSON.parse(matches[0]);
+          } catch (e) {
+            return null;
+          }
+        }
+        return null;
+      },
+      // Strategy 4: Fix common JSON issues
+      (input: string) => {
+        try {
+          // Replace common issues
+          let fixed = input
+            .replace(/[\u201C\u201D]/g, '"') // Fix smart quotes
+            .replace(/[\u2018\u2019]/g, "'") // Fix smart single quotes
+            .replace(/\n/g, "\\n") // Handle newlines
+            .replace(/\r/g, "\\r") // Handle carriage returns
+            .replace(/\t/g, "\\t") // Handle tabs
+            .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?\s*:/g, '"$2":') // Fix unquoted property names
+            .replace(/,\s*([\]}])/g, "$1"); // Remove trailing commas
+
+          return JSON.parse(fixed);
+        } catch (e) {
+          return null;
+        }
+      }
+    ];
+
+    // Try each strategy
+    for (const strategy of strategies) {
+      const result = strategy(cleanedText);
+      if (result !== null) {
+        return result;
+      }
+    }
+
+    // If all strategies fail, log error and return null
+    console.error(`Failed to parse JSON in context: ${context}`);
+    console.error("Original text:", text);
+    return null;
+  }
+
+  static async detectSubjectType(topic: string): Promise<{
+    requiresLatex: boolean;
+    requiresCode: boolean;
+    primaryContentType: "MARKDOWN" | "LATEX" | "CODE" | "MIXED";
+    suggestedTools: string[];
+  }> {
+    const prompt = `Analyze this educational topic and determine content requirements:
+Topic: ${topic}
+
+Return JSON with these fields:
+{
+  "requiresLatex": boolean,
+  "requiresCode": boolean,
+  "primaryContentType": "MARKDOWN" | "LATEX" | "CODE" | "MIXED",
+  "suggestedTools": [string],
+  "subjectArea": string,
+  "complexityLevel": number (1-5),
+  "visualizationNeeds": [string]
+}
+RETURN ONLY THE JSON, NOTHING ELSE!!! NO EXPLANATORY TEXT, JUST A PLAIN JSON!!!!  
+`;
+
+    const completion = await groq.chat.completions.create({
+      messages: [{ role: "user", content: prompt }],
+      model: "llama-3.2-90b-vision-preview",
+      temperature: 0.3,
+    });
+
+    const result = this.extractJSON(
+      completion.choices[0]?.message?.content || "{}",
+      "detectSubjectType"
+    );
+
+    // Provide default values if parsing fails
+    return result || {
+      requiresLatex: false,
+      requiresCode: false,
+      primaryContentType: "MARKDOWN",
+      suggestedTools: [],
+    };
+  }
+
+  static async generateLatexContent(topic: string, context: any): Promise<any> {
+    const wikipediaResult = (await wikipediaTool.invoke(
+      `${topic} mathematical formulation equations`
+    )).substring(0, 1000);
+
+    const academicSearch = (await tavilyTool.invoke(
+      `${topic} mathematical equations formulas academic`
+    )).substring(0, 1000);
+
+    console.log("Academic search Result:", academicSearch);
+
+    const prompt = `Generate LaTeX content for this mathematical/scientific topic:
+Topic: ${topic}
+Wikipedia Context: ${wikipediaResult}
+Academic Sources: ${JSON.stringify(academicSearch)}
+
+Requirements:
+1. Generate precise LaTeX equations
+2. Include step-by-step derivations
+3. Provide clear explanations
+4. Add practical examples
+5. Include visualization suggestions
+
+Return JSON with:
+{
+  "equations": [
+    {
+      "latex": "LaTeX equation",
+      "explanation": "Clear explanation",
+      "context": "When/how to use",
+      "visualizationHint": "How to visualize"
+    }
+  ],
+  "conceptualBreakdown": [
+    {
+      "concept": "Key concept",
+      "explanation": "Simple explanation",
+      "relatedEquations": ["equation indices"]
+    }
+  ]
+}
+  
+  RETURN ONLY THE JSON, NOTHING ELSE, NO TEXT OR ANYTHING, JUST A JSON!!!! 
+  
+  `;
+
+    const completion = await groq.chat.completions.create({
+      messages: [{ role: "user", content: prompt }],
+      model: "llama-3.2-90b-vision-preview",
+      temperature: 0.2,
+    });
+
+    return this.extractJSON(
+      completion.choices[0]?.message?.content || "{}",
+      "generateLatexContent"
+    );
+  }
+
+  private static async findRelevantRepositories(
+    topic: string,
+    language: string,
+    maxResults: number = 3
+  ): Promise<GitHubRepo[]> {
+    try {
+      const tavilyTool = new TavilySearchResults({ maxResults: 30 });
+      const searchQuery = `site:github.com ${topic} ${language} programming "stars:" "README.md"`;
+      
+      let searchResults;
+      try {
+        searchResults = await tavilyTool.invoke(searchQuery);
+      } catch (error) {
+        console.error('Search failed:', error);
+        return [];
+      }
+      
+      const repos: GitHubRepo[] = [];
+
+      
+      for (const result of searchResults) {
+        if (!result?.url || typeof result.url !== 'string') {
+          continue;
+        }
+  
+        try {
+          // Parse the GitHub URL
+          const url = new URL(result.url);
+          const pathParts = url.pathname.split('/').filter(part => part);
+          
+          // We need at least owner/repo in the path
+          if (pathParts.length < 2) {
+            continue;
+          }
+          
+          const owner = pathParts[0];
+          const name = pathParts[1];
+          
+          // Skip if this is not a repository URL
+          if (!owner || !name || name === 'search' || name === 'trending') {
+            continue;
+          }
+          
+          // Construct clean repository URL
+          const cleanUrl = `https://github.com/${owner}/${name}`;
+          
+          // Parse stars from content with improved regex
+          let stars = 0;
+          if (result.content) {
+            const starsMatch = result.content.match(/(\d+(?:\.\d+)?k?)\s*stars?/i);
+            if (starsMatch) {
+              const starCount = starsMatch[1].toLowerCase();
+              if (starCount.includes('k')) {
+                stars = Math.round(parseFloat(starCount.replace('k', '')) * 1000);
+              } else {
+                stars = parseInt(starCount, 10);
+              }
+            }
+          }
+          
+          // Only add repositories that have some metadata
+          if (stars > 0 || result.content) {
+            repos.push({
+              url: cleanUrl,
+              name,
+              description: result.content || '',
+              language,
+              stars
+            });
+          }
+        } catch (error) {
+          console.error('Error processing repository:', result.url, error);
+          continue;
+        }
+      }
+      
+      // Sort by stars and return top results
+      return repos
+        .sort((a, b) => b.stars - a.stars)
+        .slice(0, maxResults);
+        
+    } catch (error) {
+      console.error('Error finding repositories:', error);
+      return [];
+    }
+  }
+
+  static async generateCodeContent(topic: string, language: string): Promise<any> {
+    try {
+      // Find relevant repositories
+      const repos = await this.findRelevantRepositories(topic, language);
+      console.log('Found repositories:', repos);
+
+      // Load content from each repository
+      const repoContents = await Promise.all(
+        repos.map(async (repo) => {
+          try {
+            const repoLoader = new GithubRepoLoader(
+              repo.url,
+              {
+                branch: "main",
+                recursive: false,
+                maxConcurrency: 5,
+                ignorePaths: [
+                  "*.md",
+                  "*.json",
+                  "*.git*",
+                  "test*",
+                  "docs*",
+                  "example*"
+                ]
+              }
+            );
+            
+            const docs = await repoLoader.load();
+            return {
+              repo,
+              content: docs,
+              error: null
+            };
+          } catch (error) {
+            console.error(`Error loading repo ${repo.url}:`, error);
+            return {
+              repo,
+              content: [],
+              error: error instanceof Error ? error.message : 'Unknown error'
+            };
+          }
+        })
+      );
+
+      // Additional search for best practices and tutorials
+      const searchResults = await tavilyTool.invoke(
+        `${topic} ${language} programming tutorial best practices 2024`
+      );
+
+      const prompt = `Generate programming content for:
+Topic: ${topic}
+Language: ${language}
+Found Repositories: ${JSON.stringify(repos)}
+Repository Contents: ${JSON.stringify(repoContents.map(rc => ({
+  repo: rc.repo.name,
+  contentSummary: rc.content.slice(0, 500)
+})))}
+Current Best Practices: ${JSON.stringify(searchResults)}
+
+Requirements:
+1. Modern, production-quality code examples
+2. Clear explanations and comments
+3. Best practices and patterns
+4. Common pitfalls to avoid
+5. Testing approaches
+6. Performance considerations
+
+Return JSON with:
+{
+  "examples": [
+    {
+      "code": "code snippet",
+      "explanation": "detailed explanation",
+      "bestPractices": ["practices used"],
+      "commonMistakes": ["things to avoid"],
+      "testingApproach": "how to test",
+      "sourceRepo": "repository name if derived from example"
+    }
+  ],
+  "conceptualFramework": {
+    "keyIdeas": ["main concepts"],
+    "designPatterns": ["relevant patterns"],
+    "architecturalConsiderations": ["important considerations"]
+  },
+  "referencedRepositories": [{
+    "name": "repo name",
+    "url": "repo url",
+    "usageContext": "how this repo's patterns were used"
+  }]
+}
+  
+RETURN ONLY THE JSON, JUST THE JSON, NOTHING ELSE. MY LIFE DEPENDS ON THIS.
+`;
+
+      const completion = await groq.chat.completions.create({
+        messages: [{ role: "user", content: prompt }],
+        model: "llama-3.2-90b-vision-preview",
+        temperature: 0.3,
+      });
+
+      return this.extractJSON(
+        completion.choices[0]?.message?.content || "{}",
+        "generateCodeContent"
+      );
+    } catch (error) {
+      console.error("Error generating code content:", error);
+      throw error;
+    }
+  }
+}
+
 class IntelligentCourseAgent {
   private static async getCompletion(
     prompt: string,
@@ -56,10 +575,10 @@ class IntelligentCourseAgent {
     return completion.choices[0]?.message?.content || "";
   }
 
-  private static async searchContent(query: string): Promise<any[]> {
+  static async searchContent(query: string): Promise<any[]> {
     try {
       const results = await tavilyTool.invoke(query);
-      return Array.isArray(results) ? results : [results];
+      return SearchResultsHandler.normalizeSearchResults(results);
     } catch (error) {
       console.error("Search failed:", error);
       return [];
@@ -70,14 +589,15 @@ class IntelligentCourseAgent {
     try {
       const userContext = await this.getUserContext(state.userId);
 
-      const structurePrompt = `Create an innovative course structure based on:
+      const structurePrompt = `Create an innovative course structure for:
+Course Idea: ${state.courseIdea}
 Market Research: ${JSON.stringify(state.marketResearch)}
 User Context: ${JSON.stringify(userContext)}
 Analysis: ${state.analysis}
 
 Return a JSON object with EXACTLY this structure:
 {
-  "title": "Clear, specific course title",
+  "title": "Clear, specific course title based on the course idea",
   "description": "Detailed course description",
   "status": "DRAFT",
   "marketRelevance": 0.6,
@@ -97,18 +617,19 @@ Return a JSON object with EXACTLY this structure:
 }
 
 Requirements:
-1. ALL fields must be included exactly as shown
-2. Numbers must be actual numbers, not strings
-3. Arrays must have at least one item
-4. Status must be exactly "DRAFT"
-5. marketRelevance and trendAlignment must be between 0 and 1
-6. estimatedHours must be a positive number
-7. Each module must have all required fields
+1. Title and description should directly relate to the course idea
+2. ALL fields must be included exactly as shown
+3. Numbers must be actual numbers, not strings
+4. Arrays must have at least one item
+5. Status must be exactly "DRAFT"
+6. marketRelevance and trendAlignment must be between 0 and 1
+7. estimatedHours must be a positive number
+8. Each module must have all required fields
+9. Module progression should follow a logical learning path
 
 Generate ONLY the JSON object with no additional text or explanations.`;
 
-      let response = await this.getCompletion(structurePrompt, 0.3); // Lower temperature for more consistent output
-      
+      let response = await this.getCompletion(structurePrompt, 0.3);
       // Clean up response to ensure it's valid JSON
       response = response.trim();
       
@@ -215,20 +736,47 @@ Generate ONLY the JSON object with no additional text or explanations.`;
 
   static async marketResearch(state: typeof AgentState.State) {
     try {
-      const userContext = await this.getUserContext(state.userId);
-
-      // Perform market research using search tool
-      const marketQuery = `${userContext?.expertiseLevel} level course curriculum ${state.analysis} industry trends 2024`;
+      const userAnalysis = await this.analyzeUserHistory(state.userId);
+      
+      // Enhanced market query using course idea and user context
+      const marketQuery = `
+        ${state.courseIdea} 
+        ${state.analysis} 
+        expertise:${userAnalysis.preferences.expertiseLevel} 
+        ${userAnalysis.gaps.suggestedTopics.join(' ')} 
+        industry trends 2024
+      `;
+      
       const searchResults = await this.searchContent(marketQuery);
+      const wikiContext = await wikipediaTool.invoke(state.courseIdea).catch(() => null);
+  
+      // Check for content overlap
+      const existingContent = new Set(userAnalysis.expertise.knownConcepts);
+      const filteredResults = searchResults.filter(result => 
+        !Array.from(existingContent).some(concept => 
+          result.content.toLowerCase().includes((concept as any).toLowerCase())
+        )
+      );
+  
+      const researchPrompt = `
+Analyze market research for course creation:
+Course Idea: ${state.courseIdea}
+Wikipedia Context: ${wikiContext}
+Search Results: ${JSON.stringify(filteredResults)}
 
-      const researchPrompt = `Analyze these market research results and create a course strategy:
-${JSON.stringify(searchResults)}
+User Context:
+${JSON.stringify(userAnalysis)}
 
-Current context:
-- User Level: ${userContext?.expertiseLevel}
-- Analysis: ${state.analysis}
+Current focus: ${state.analysis}
 
-Generate market insights in this JSON structure:
+Return a JSON strategy that:
+1. Evaluates the specific course idea viability
+2. Avoids duplicating user's known concepts: ${Array.from(existingContent).join(', ')}
+3. Fills knowledge gaps: ${userAnalysis.gaps.missingConcepts.join(', ')}
+4. Aligns with interest areas: ${userAnalysis.preferences.interests.map((i: any) => i.name).join(', ')}
+5. Matches expertise level: ${userAnalysis.preferences.expertiseLevel}
+
+Include:
 {
   "marketTrends": [string],
   "competitorAnalysis": [string],
@@ -236,23 +784,38 @@ Generate market insights in this JSON structure:
   "recommendedApproach": string,
   "uniqueSellingPoints": [string],
   "targetAudience": string,
-  "estimatedMarketSize": string
-}`;
+  "estimatedMarketSize": string,
+  "differentiators": [string],
+  "prerequisiteAlignment": number,
+  "gapCoverage": number,
+  "ideaViability": {
+    "score": number,
+    "reasoning": string,
+    "suggestions": [string]
+  }
+}
 
+PLEASE RETURN ONLY A JSON, NOTHING ELSE, NO EXPLANATORY TEXT, JUST THE PLAIN JSON, MY LIFE DEPENDS ON THIS!!!
+`;
+  
       const response = await this.getCompletion(researchPrompt);
       const marketResearch = this.extractJSON(response);
-
+  
       return {
-        messages: [new HumanMessage("Market research completed")],
-        marketResearch,
-        searchResults,
-        next: "STRUCTURE",
+        messages: [new HumanMessage("Market research completed with course idea analysis")],
+        marketResearch: {
+          ...marketResearch,
+          userContext: userAnalysis,
+          courseIdea: state.courseIdea
+        },
+        searchResults: filteredResults,
+        next: "STRUCTURE"
       };
     } catch (error) {
       console.error("Market research failed:", error);
       return {
         messages: [new HumanMessage(`Market research failed: ${error}`)],
-        next: "ERROR",
+        next: "ERROR"
       };
     }
   }
@@ -260,61 +823,427 @@ Generate market insights in this JSON structure:
   static async generateContent(state: typeof AgentState.State) {
     try {
       const { courseStructure } = state;
-
+  
+      // Track generation metrics
+      const metrics = {
+        startTime: Date.now(),
+        successfulModules: 0,
+        failedModules: 0,
+        totalTokensUsed: 0,
+        errors: [] as string[]
+      };
+  
       const enrichedModules = await Promise.all(
         courseStructure.modules.map(async (module: any, index: number) => {
-          // Search for relevant content
-          const searchResults = await this.searchContent(
-            `${module.title} course content tutorial examples projects`
-          );
+          console.log(`Generating content for module ${index + 1}: ${module.title}`);
+          
+          try {
+            // 1. Detect content type requirements
+            const contentType = await ContentTypeDetector.detectSubjectType(
+              module.title
+            ).catch(error => {
+              console.warn(`Content type detection failed for module ${index}, using defaults:`, error);
+              return {
+                requiresLatex: false,
+                requiresCode: false,
+                primaryContentType: "MARKDOWN",
+                suggestedTools: []
+              };
+            });
+  
+            // 2. Gather relevant content from multiple sources
+            const [searchResults, wikiContent] = await Promise.all([
+              // Search for tutorials and examples
+              this.searchContent(`${module.title} course content tutorial examples projects`),
+              
+              // Get Wikipedia context if available
+              wikipediaTool.invoke(module.title).catch(() => null)
+            ]);
+  
+            let specializedContent = null;
+            let contentPrompt = "";
+            let codeExamples = [];
+            let latexContent = [];
+  
+            // 3. Generate specialized content based on type
+            if (contentType.requiresLatex) {
+              const latexResult = await ContentTypeDetector.generateLatexContent(
+                module.title,
+                {
+                  searchResults,
+                  wikiContent
+                }
+              ).catch(error => {
+                console.warn(`LaTeX generation failed for module ${index}:`, error);
+                return null;
+              });
+  
+              if (latexResult) {
+                specializedContent = SearchResultsHandler.safeParseJson(
+                  latexResult,
+                  'LaTeX content'
+                );
+                latexContent = specializedContent?.equations || [];
+              }
+  
+              contentPrompt = `Create comprehensive module content combining LaTeX and explanations:
+  Title: "${module.title}"
+  Duration: ${module.duration} minutes
+  Content Type: Mathematics/Science
+  Primary Audience Level: ${state.analysis?.expertiseLevel || 'BEGINNER'}
+  
+  LaTeX Content: ${JSON.stringify(specializedContent)}
+  Wikipedia Context: ${wikiContent}
+  Search Results: ${JSON.stringify(searchResults)}
+  
+  Requirements:
+  1. Start with fundamental concepts
+  2. Include step-by-step derivations
+  3. Provide practical examples
+  4. Add knowledge check questions
+  5. Include visual suggestions
+  6. Reference real-world applications
+  
+  Format in clear MARKDOWN with LaTeX equations.`;
+  
+            } else if (contentType.requiresCode) {
+              // Find relevant code repositories
+              const codeResult = await ContentTypeDetector.generateCodeContent(
+                module.title,
+                "python" // Could be dynamic based on course needs
+              ).catch(error => {
+                console.warn(`Code generation failed for module ${index}:`, error);
+                return null;
+              });
+  
+              if (codeResult) {
+                specializedContent = SearchResultsHandler.safeParseJson(
+                  codeResult,
+                  'Code content'
+                );
+                codeExamples = specializedContent?.examples || [];
+              }
+  
+              contentPrompt = `Create comprehensive programming module content:
+  Title: "${module.title}"
+  Duration: ${module.duration} minutes
+  Content Type: Programming/Technical
+  Primary Audience Level: ${state.analysis?.expertiseLevel || 'BEGINNER'}
+  
+  Code Examples: ${JSON.stringify(codeExamples)}
+  Search Results: ${JSON.stringify(searchResults)}
+  
+  Requirements:
+  1. Start with concept explanation
+  2. Provide working code examples
+  3. Include best practices
+  4. Add debugging tips
+  5. Include practical exercises
+  6. Reference industry standards
+  
+  Format in clear MARKDOWN with code blocks.`;
+  
+            } else {
+              // General content
+              contentPrompt = `Create comprehensive module content:
+  Title: "${module.title}"
+  Duration: ${module.duration} minutes
+  Content Type: ${contentType.primaryContentType}
+  Primary Audience Level: ${state.analysis?.expertiseLevel || 'BEGINNER'}
+  
+  Context:
+  ${wikiContent ? `Wikipedia: ${wikiContent}\n` : ''}
+  Search Results: ${JSON.stringify(searchResults)}
+  
+  Requirements:
+  1. Clear learning objectives
+  2. Engaging explanations
+  3. Real-world examples
+  4. Interactive exercises
+  5. Knowledge checks
+  6. Industry relevance
+  7. Clear section structure
+  
+  Format in clear, well-structured MARKDOWN.`;
+            }
+  
+            // 4. Generate main content with retries
+            let content = '';
+            let attempts = 0;
+            const maxAttempts = 3;
 
-          const contentPrompt = `Create comprehensive module content:
-Title: "${module.title}"
-Search Results: ${JSON.stringify(searchResults)}
-Market Research: ${JSON.stringify(state.marketResearch)}
+            const userAnalysis = state.marketResearch.userContext;
+            const existingKnowledge = new Set(userAnalysis.expertise.knownConcepts);
+            
+            contentPrompt = `${contentPrompt}
+
+User Context:
+- Expertise Level: ${userAnalysis.preferences.expertiseLevel}
+- Known Concepts: ${Array.from(existingKnowledge).join(', ')}
+- Knowledge Gaps: ${userAnalysis.gaps.missingConcepts.join(', ')}
+- Weekly Study Hours: ${userAnalysis.preferences.weeklyHours}
 
 Requirements:
-1. Create engaging MARKDOWN content
-2. Include code examples and projects
-3. Add interactive exercises
-4. Incorporate real-world applications
-5. Include knowledge checks
-6. Reference current industry practices
-
-Content should be highly detailed and practical.`;
-
-          const content = await this.getCompletion(contentPrompt);
-
-          return {
-            ...module,
-            content,
-            searchResults,
-            aiGenerated: true,
-            aiPrompt: contentPrompt,
-            qualityScore: 0, // Will be updated in quality check
-            revisionHistory: [],
-          };
+1. Focus on filling knowledge gaps
+2. Avoid repeating known concepts
+3. Match expertise level
+4. Align with available study time
+5. Build on existing knowledge
+6. Provide unique insights`;
+  
+            while (!content && attempts < maxAttempts) {
+              try {
+                const completion = await groq.chat.completions.create({
+                  messages: [{ role: "user", content: contentPrompt }],
+                  model: "llama-3.2-90b-vision-preview",
+                  temperature: 0.3,
+                  max_tokens: 8192,
+                });
+  
+                content = completion.choices[0]?.message?.content || '';
+                metrics.totalTokensUsed += completion.usage?.total_tokens || 0;
+                
+                // Validate content
+                if (content.length < 100) {
+                  throw new Error('Generated content too short');
+                }
+              } catch (error) {
+                console.warn(`Content generation attempt ${attempts + 1} failed:`, error);
+                attempts++;
+                await new Promise(resolve => setTimeout(resolve, 1000 * attempts)); // Exponential backoff
+              }
+            }
+  
+            if (!content) {
+              throw new Error(`Failed to generate content after ${maxAttempts} attempts`);
+            }
+  
+            // 5. Generate interactive elements
+            const interactiveElements = await this.generateInteractiveElements(
+              module.title,
+              content,
+              contentType
+            ).catch(error => {
+              console.warn(`Interactive elements generation failed for module ${index}:`, error);
+              return [];
+            });
+  
+            // 6. Assemble final module content
+            metrics.successfulModules++;
+            
+            return {
+              ...module,
+              content,
+              searchResults,
+              aiGenerated: true,
+              aiPrompt: contentPrompt,
+              qualityScore: 0,
+              revisionHistory: [],
+              contentType: contentType.primaryContentType,
+              specializedContent,
+              latexContent,
+              codeExamples,
+              interactiveElements,
+              metadata: {
+                generatedAt: new Date().toISOString(),
+                contentLength: content.length,
+                attempts,
+                hasSpecializedContent: !!specializedContent
+              }
+            };
+  
+          } catch (moduleError) {
+            console.error(`Error generating content for module ${index}:`, moduleError);
+            metrics.failedModules++;
+            metrics.errors.push(`Module ${index} (${module.title}): ${(moduleError as any).message}`);
+  
+            // Return module with error state
+            return {
+              ...module,
+              content: "Content generation failed. Please retry generation for this module.",
+              aiGenerated: true,
+              qualityScore: 0,
+              contentType: "MARKDOWN",
+              generationError: (moduleError as any).message,
+              metadata: {
+                generatedAt: new Date().toISOString(),
+                error: true,
+                errorType: (moduleError as any).name,
+                errorMessage: (moduleError as any).message
+              }
+            };
+          }
         })
       );
-
+  
+      // Calculate generation metrics
+      metrics.duration = Date.now() - metrics.startTime;
+      
       const enrichedCourse = {
         ...courseStructure,
         modules: enrichedModules,
+        generationMetrics: {
+          ...metrics,
+          successRate: metrics.successfulModules / courseStructure.modules.length,
+          averageTokensPerModule: metrics.totalTokensUsed / courseStructure.modules.length,
+          timestamp: new Date().toISOString()
+        }
       };
-
+  
+      // Determine next step based on success rate
+      const successThreshold = 0.7; // 70% success rate required
+      const next = enrichedCourse.generationMetrics.successRate >= successThreshold 
+        ? "QUALITY_CHECK" 
+        : "ERROR";
+  
       return {
-        messages: [new HumanMessage("Course content generated")],
+        messages: [new HumanMessage(
+          next === "QUALITY_CHECK"
+            ? `Course content generated successfully (${Math.round(enrichedCourse.generationMetrics.successRate * 100)}% success rate)`
+            : `Course generation partially failed (${Math.round(enrichedCourse.generationMetrics.successRate * 100)}% success rate)`
+        )],
         courseContent: enrichedCourse,
-        next: "QUALITY_CHECK",
+        next
       };
+  
     } catch (error) {
       console.error("Content generation failed:", error);
       return {
-        messages: [new HumanMessage("Content generation failed")],
+        messages: [new HumanMessage(`Content generation failed: ${(error as any).message}`)],
         next: "ERROR",
+        courseContent: null
       };
     }
   }
+  
+private static async analyzeUserHistory(userId: string): Promise<{
+  preferences: any,
+  expertise: any,
+  gaps: any
+}> {
+  const userContext = await prisma.user.findUnique({
+    where: { id: userId },
+    include: {
+      courses: {
+        include: {
+          modules: true,
+          interests: true,
+          marketTrend: true
+        }
+      },
+      interests: {
+        include: {
+          marketTrends: true
+        }
+      },
+      enrollments: {
+        include: {
+          course: true
+        }
+      },
+      marketInsights: true
+    }
+  });
+
+  // Analyze completed courses
+  const completedCourses = userContext?.enrollments?.filter(
+    e => e.status === 'COMPLETED'
+  ) || [];
+
+  // Extract key topics and concepts
+  const knownConcepts = new Set(
+    completedCourses.flatMap(e => 
+      e.course.keyTakeaways.concat(e.course.prerequisites)
+    )
+  );
+
+  // Analyze authored courses for expertise areas
+  const authoredTopics = new Set(
+    userContext?.courses?.flatMap(c => 
+      c.keyTakeaways.concat(c.prerequisites)
+    ) || []
+  );
+
+  // Find gaps in knowledge
+  const relatedTopics = new Set(
+    userContext?.interests?.flatMap(i => 
+      i.trendingTopics.concat(
+        i.marketTrends.map(t => t.name)
+      )
+    ) || []
+  );
+
+  const knowledgeGaps = Array.from(relatedTopics)
+    .filter(topic => !knownConcepts.has(topic));
+
+  return {
+    preferences: {
+      expertiseLevel: userContext?.expertiseLevel,
+      weeklyHours: userContext?.weeklyHours,
+      interests: userContext?.interests,
+      preferenceAnalysis: userContext?.preferenceAnalysis
+    },
+    expertise: {
+      completedCourses: completedCourses.length,
+      authoredCourses: userContext?.courses?.length || 0,
+      knownConcepts: Array.from(knownConcepts),
+      expertiseAreas: Array.from(authoredTopics)
+    },
+    gaps: {
+      missingConcepts: knowledgeGaps,
+      suggestedTopics: userContext?.interests
+        ?.filter(i => i.marketDemand === 'HIGH')
+        .map(i => i.name) || []
+    }
+  };
+}
+
+  // Helper method for generating interactive elements
+  static async generateInteractiveElements(
+    title: string,
+    content: string,
+    contentType: any
+  ): Promise<any[]> {
+    try {
+      const prompt = `Create interactive elements for module: ${title}
+  Type: ${contentType.primaryContentType}
+  Summary: ${content.substring(0, 300)}
+  
+  Generate 3-7 elements in this format:
+  {
+    "elements": [
+      {
+        "type": "quiz|exercise|discussion",
+        "title": "string",
+        "content": "string",
+        "solution": "string",
+        "difficulty": "beginner|intermediate|advanced"
+      }
+    ]
+  }
+    
+  RETURN ONLY A JSON, NO OTHER TEXT OR EXPLANATION, JUST THE JSON.  
+  
+  `;
+  
+      const completion = await groq.chat.completions.create({
+        messages: [{ role: "user", content: prompt }],
+        model: "llama-3.2-90b-vision-preview",
+        temperature: 0.3,
+        max_tokens: 1024
+      });
+  
+      const result = SearchResultsHandler.safeParseJson(
+        completion.choices[0]?.message?.content || "{}",
+        'Interactive elements'
+      );
+  
+      return result?.elements || [];
+    } catch (error) {
+      console.error("Failed to generate interactive elements:", error);
+      return [];
+    }
+  };
 
   static async qualityCheck(state: typeof AgentState.State) {
     try {
@@ -445,7 +1374,7 @@ Focus areas:
 4. ${moduleAnalysis?.scores.engagement < 0.7 ? 'Increase engagement and interactivity' : 'Maintain engagement'}
 5. ${moduleAnalysis?.scores.marketAlignment < 0.7 ? 'Better align with market needs' : 'Maintain market alignment'}
 
-Original content summary: ${module.content.substring(0, 500)}...
+Original content summary: ${module.content.substring(0, 1000)}...
 
 Return improved MARKDOWN content that addresses these issues.`;
 
@@ -481,10 +1410,11 @@ Return improved MARKDOWN content that addresses these issues.`;
   
   static async supervise(state: typeof AgentState.State) {
     try {
-      const supervisorPrompt = `Analyze current course generation state and determine next action. Be inclinced to generating high quality content.
+      const supervisorPrompt = `Analyze current course generation state and determine next action.
 
 Current State:
 ${JSON.stringify({
+  courseIdea: state.courseIdea,
   hasMarketResearch: !!state.marketResearch,
   hasStructure: !!state.courseStructure,
   hasContent: !!state.courseContent,
@@ -492,7 +1422,7 @@ ${JSON.stringify({
   currentStep: state.next,
   qualityScore: state.qualityAnalysis?.averageScore,
   retryCount: state.retryCount || 0,
-  previousMessages: state.messages.slice(-3) // Last 3 messages for context
+  previousMessages: state.messages.slice(-3)
 }, null, 2)}
 
 Available Actions:
@@ -505,12 +1435,13 @@ Available Actions:
 - ERROR: Handle failures
 
 Requirements:
-1. MARKET_RESEARCH must complete successfully before STRUCTURE
-2. STRUCTURE requires valid market research
-3. CONTENT requires valid structure
-4. QUALITY_CHECK requires content
-5. REFINE_CONTENT triggers if quality score < 0.6
-6. FINISH requires all steps complete with good quality
+1. Validate course idea exists before proceeding
+2. MARKET_RESEARCH must complete successfully before STRUCTURE
+3. STRUCTURE requires valid market research
+4. CONTENT requires valid structure
+5. QUALITY_CHECK requires content
+6. REFINE_CONTENT triggers if quality score < 0.6
+7. FINISH requires all steps complete with good quality
 
 Return a JSON object with:
 {
@@ -650,6 +1581,10 @@ const AgentState = Annotation.Root({
     reducer: (x, y) => y ?? x,
     default: () => "",
   }),
+  courseIdea: Annotation<string>({
+    reducer: (x, y) => y ?? x,
+    default: () => "",
+  }),
   marketResearch: Annotation<any>({
     reducer: (x, y) => y ?? x,
     default: () => null,
@@ -672,6 +1607,11 @@ const AgentState = Annotation.Root({
   }),
 });
 
+const RequestSchema = z.object({
+  analysis: z.any(),
+  courseIdea: z.string().min(1, "Course idea is required")
+});
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -685,10 +1625,15 @@ export async function POST(req: Request) {
       );
     }
 
+    console.log(body)
+
+    const { analysis, courseIdea } = RequestSchema.parse(body);
+
     let state: typeof AgentState.State = {
       messages: [],
       userId,
-      analysis: body.analysis,
+      analysis,
+      courseIdea, // Add course idea to initial state
       marketResearch: null,
       courseStructure: null,
       courseContent: null,
@@ -857,16 +1802,3 @@ export async function POST(req: Request) {
     );
   }
 }
-
-// Export additional utility types if needed
-export type CourseGenerationResponse = z.infer<typeof CourseSchema> & {
-  qualityMetrics: Record<string, number>;
-  marketResearch: any;
-  generationMetadata: {
-    steps: number;
-    refinements: number;
-    qualityScore: number;
-    marketAlignment: number;
-    generationTime: string;
-  };
-};

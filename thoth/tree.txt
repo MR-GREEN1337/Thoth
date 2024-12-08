@@ -2,6 +2,8 @@ src/
 ├── app
 │   ├── actions
 │   │   ├── auth.ts
+│   │   ├── generate-ai-response.ts
+│   │   ├── generate-suggestion.ts
 │   │   ├── onboarding.ts
 │   │   └── preferences.ts
 │   ├── api
@@ -19,13 +21,19 @@ src/
 │   │       │   ├── [courseId]
 │   │       │   │   ├── fork
 │   │       │   │   │   └── route.ts
+│   │       │   │   ├── fork-tree
+│   │       │   │   │   └── route.ts
+│   │       │   │   ├── messages
+│   │       │   │   │   └── route.ts
 │   │       │   │   ├── publish
 │   │       │   │   │   └── route.ts
 │   │       │   │   └── route.ts
 │   │       │   └── route.ts
 │   │       ├── generate-courses
 │   │       │   └── route.ts
-│   │       └── preferences
+│   │       ├── preferences
+│   │       │   └── route.ts
+│   │       └── profile
 │   │           └── route.ts
 │   ├── favicon.ico
 │   ├── fonts
@@ -45,11 +53,15 @@ src/
 │   │       ├── course
 │   │       │   └── [courseId]
 │   │       │       ├── _components
-│   │       │       │   └── courseClient.tsx
+│   │       │       │   ├── CourseChat.tsx
+│   │       │       │   ├── courseClient.tsx
+│   │       │       │   ├── CourseForkTree.tsx
+│   │       │       │   └── EditableSection.tsx
 │   │       │       └── page.tsx
 │   │       ├── dashboard
 │   │       │   ├── _components
 │   │       │   │   ├── CourseCard.tsx
+│   │       │   │   ├── DashboardClient.tsx
 │   │       │   │   └── GenerateCourseDialog.tsx
 │   │       │   └── page.tsx
 │   │       ├── layout.tsx
@@ -60,9 +72,11 @@ src/
 │   └── page.tsx
 ├── components
 │   ├── auth
-│   │   └── IntertwiningArcs.tsx
+│   │   ├── IntertwiningArcs.tsx
+│   │   └── SignOutButton.tsx
 │   ├── global
-│   │   └── logo.tsx
+│   │   ├── logo.tsx
+│   │   └── ProfileDropdown.tsx
 │   ├── providers
 │   │   └── AppProviders.tsx
 │   └── ui
@@ -116,6 +130,7 @@ src/
 │       └── tooltip.tsx
 ├── hooks
 │   ├── use-community-courses.ts
+│   ├── use-course-messages.ts
 │   ├── use-debounce.ts
 │   ├── use-mobile.tsx
 │   ├── use-toast.ts
@@ -129,4 +144,4 @@ src/
     ├── course.ts
     └── preferences.ts
 
-37 directories, 93 files
+40 directories, 105 files

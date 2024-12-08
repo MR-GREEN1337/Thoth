@@ -33,6 +33,9 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import FloatingEditor from "./EditableSection";
 import Cookies from "js-cookie";
+import CourseChat from "./CourseChat";
+import CourseForksTree from "./CourseForkTree";
+import React from "react";
 
 interface Module {
   id: string;
@@ -65,18 +68,46 @@ interface Course {
   ownerId?: string;
 }
 
-interface FloatingEditorProps {
-  content: string;
-  onSave: (content: string) => Promise<void>;
-  children?: React.ReactNode;
-  type?: "markdown" | "text";
-  course: Course;
-  currentUserId?: string;
-}
-
 interface CourseClientProps {
   initialCourse: Course;
 }
+
+interface MathContent {
+  type: "equation" | "theorem" | "proof" | "example";
+  latex: string;
+  explanation: string;
+  reference?: string;
+}
+
+interface Module {
+  mathContent?: MathContent[];
+  equations?: string[];
+  theorems?: string[];
+  requiresLatex?: boolean;
+}
+
+const MathDisplay = ({ content }: { content: MathContent }) => {
+  return (
+    <div className="my-6 p-4 bg-gray-800/30 rounded-lg border border-gray-700">
+      <div className="mb-4">
+        <div className="text-lg font-semibold text-blue-400 mb-2">
+          {content.type.charAt(0).toUpperCase() + content.type.slice(1)}
+        </div>
+        <div className="latex-container overflow-x-auto p-4 bg-gray-900/50 rounded">
+          {content.latex}
+        </div>
+      </div>
+      {content.explanation && (
+        <div className="mt-4 text-gray-300">{content.explanation}</div>
+      )}
+      {content.reference && (
+        <div className="mt-2 text-sm text-gray-400">
+          Reference: {content.reference}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export function CourseClient({ initialCourse }: CourseClientProps) {
   const router = useRouter();
@@ -84,29 +115,8 @@ export function CourseClient({ initialCourse }: CourseClientProps) {
     initialCourse?.modules[0]?.id || null
   );
   const [isForking, setIsForking] = useState(false);
-  const canEdit = initialCourse.author.id === Cookies.get("token"); // can modify only if course belongs to user
-
-  console.log(initialCourse);
-  console.log(Cookies.get("token"));
-  console.log(canEdit);
-
-  if (!initialCourse) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 flex items-center justify-center">
-        <Card className="bg-gray-800/50 border-gray-700 max-w-md mx-auto">
-          <CardContent className="flex flex-col items-center justify-center py-16">
-            <BookOpen className="h-16 w-16 text-gray-400 mb-4" />
-            <h2 className="text-xl font-semibold text-white mb-2">
-              Course Not Found
-            </h2>
-            <p className="text-gray-400 text-center">
-              The course you're looking for doesn't exist or has been removed.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  const canEdit = initialCourse.author.id === Cookies.get("token");
+  const [isPublishing, setIsPublishing] = useState(false);
 
   const handleFork = async () => {
     try {
@@ -131,6 +141,41 @@ export function CourseClient({ initialCourse }: CourseClientProps) {
       toast.error(error.message || "Failed to fork course");
     } finally {
       setIsForking(false);
+    }
+  };
+
+  const handlePublishCourse = async () => {
+    setIsPublishing(true);
+    try {
+      const response = await fetch(
+        `/api/user/courses/${initialCourse.id}/publish`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            status:
+              initialCourse.status === "PUBLISHED" ? "DRAFT" : "PUBLISHED",
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to update course status");
+      }
+
+      toast.success(
+        initialCourse.status === "PUBLISHED"
+          ? "Course unpublished successfully"
+          : "Course published successfully"
+      );
+
+      router.refresh();
+    } catch (error) {
+      toast.error("Failed to update course status");
+    } finally {
+      setIsPublishing(false);
     }
   };
 
@@ -207,6 +252,20 @@ export function CourseClient({ initialCourse }: CourseClientProps) {
                   High Market Relevance
                 </Badge>
               )}
+              {initialCourse.status && (
+                <Badge
+                  variant="secondary"
+                  className={
+                    initialCourse.status === "PUBLISHED"
+                      ? "bg-green-500/20 text-green-200"
+                      : initialCourse.status === "DRAFT"
+                      ? "bg-yellow-500/20 text-yellow-200"
+                      : "bg-gray-500/20 text-gray-200"
+                  }
+                >
+                  {initialCourse.status.toLowerCase()}
+                </Badge>
+              )}
             </div>
 
             <div className="flex items-center gap-6">
@@ -240,9 +299,32 @@ export function CourseClient({ initialCourse }: CourseClientProps) {
                   </>
                 )}
               </Button>
+              {canEdit && (
+                <Button
+                  variant="outline"
+                  className="border-gray-700 text-gray-300 hover:bg-gray-800"
+                  onClick={handlePublishCourse}
+                  disabled={isPublishing}
+                >
+                  {isPublishing ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      {initialCourse.status === "PUBLISHED"
+                        ? "Unpublishing..."
+                        : "Publishing..."}
+                    </>
+                  ) : (
+                    <>
+                      <BookOpen className="mr-2 h-4 w-4" />
+                      {initialCourse.status === "PUBLISHED"
+                        ? "Unpublish"
+                        : "Publish"}
+                    </>
+                  )}
+                </Button>
+              )}
             </div>
           </div>
-
           <Card className="bg-gray-800/50 border-gray-700">
             <CardHeader>
               <CardTitle className="text-white">Course Progress</CardTitle>
@@ -275,6 +357,12 @@ export function CourseClient({ initialCourse }: CourseClientProps) {
               className="data-[state=active]:bg-gray-700"
             >
               Course Content
+            </TabsTrigger>
+            <TabsTrigger
+              value="chat"
+              className="data-[state=active]:bg-gray-700"
+            >
+              Discussion
             </TabsTrigger>
             <TabsTrigger
               value="info"
@@ -322,153 +410,398 @@ export function CourseClient({ initialCourse }: CourseClientProps) {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="prose prose-invert max-w-none">
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm, remarkMath]}
-                        rehypePlugins={[rehypeKatex]}
-                        components={{
-                          code({
-                            node,
-                            inline,
-                            className,
-                            children,
-                            ...props
-                          }) {
-                            const match = /language-(\w+)/.exec(
-                              className || ""
-                            );
-                            return !inline && match ? (
-                              <SyntaxHighlighter
-                                style={dracula}
-                                language={match[1]}
-                                PreTag="div"
-                                {...props}
+                    <div className="overflow-x-auto">
+                      <div className="min-w-[800px] w-full">
+                        {canEdit && activeModuleContent ? (
+                          <FloatingEditor
+                            key={`module-${activeModuleContent.id}`}
+                            content={activeModuleContent.content}
+                            onSave={async (newContent) => {
+                              await fetch(
+                                `/api/user/courses/${initialCourse.id}/modules/${activeModuleContent.id}`,
+                                {
+                                  method: "PATCH",
+                                  body: JSON.stringify({ content: newContent }),
+                                }
+                              );
+                            }}
+                            type="markdown"
+                            course={initialCourse}
+                          >
+                            <div className="prose prose-invert max-w-none">
+                              <ReactMarkdown
+                                remarkPlugins={[remarkGfm, remarkMath]}
+                                rehypePlugins={[rehypeKatex]}
+                                components={{
+                                  // Code blocks and inline code
+                                  code({
+                                    node,
+                                    inline,
+                                    className,
+                                    children,
+                                    ...props
+                                  }) {
+                                    const match = /language-(\w+)/.exec(
+                                      className || ""
+                                    );
+                                    return !inline && match ? (
+                                      <div className="my-4">
+                                        <SyntaxHighlighter
+                                          style={dracula}
+                                          language={match[1]}
+                                          PreTag="div"
+                                          {...props}
+                                        >
+                                          {String(children).replace(/\n$/, "")}
+                                        </SyntaxHighlighter>
+                                      </div>
+                                    ) : (
+                                      <code
+                                        className="bg-gray-800/50 px-1.5 py-0.5 rounded text-gray-200"
+                                        {...props}
+                                      >
+                                        {children}
+                                      </code>
+                                    );
+                                  },
+
+                                  // Math blocks
+                                  math: ({ value }) => (
+                                    <span className="block my-4 overflow-x-auto">
+                                      <span className="latex-container inline-block bg-gray-900/50 p-4 rounded">
+                                        {value}
+                                      </span>
+                                    </span>
+                                  ),
+
+                                  // Inline math
+                                  inlineMath: ({ value }) => (
+                                    <span className="latex-inline">
+                                      {value}
+                                    </span>
+                                  ),
+
+                                  // Paragraphs with block element handling
+                                  p: ({ children, ...props }) => {
+                                    const hasBlockElement =
+                                      React.Children.toArray(children).some(
+                                        (child: any) =>
+                                          child?.props?.className?.includes(
+                                            "latex-container"
+                                          ) || child?.type === "div"
+                                      );
+
+                                    return hasBlockElement ? (
+                                      <>{children}</>
+                                    ) : (
+                                      <p
+                                        className="mb-4 text-gray-300 leading-relaxed"
+                                        {...props}
+                                      >
+                                        {children}
+                                      </p>
+                                    );
+                                  },
+
+                                  // Headings
+                                  h1: ({ node, ...props }) => (
+                                    <h1
+                                      className="text-2xl font-bold mb-4 text-white mt-6"
+                                      {...props}
+                                    />
+                                  ),
+                                  h2: ({ node, ...props }) => (
+                                    <h2
+                                      className="text-xl font-bold mb-3 text-white mt-5"
+                                      {...props}
+                                    />
+                                  ),
+                                  h3: ({ node, ...props }) => (
+                                    <h3
+                                      className="text-lg font-bold mb-2 text-white mt-4"
+                                      {...props}
+                                    />
+                                  ),
+
+                                  // Lists
+                                  ul: ({ node, ...props }) => (
+                                    <ul
+                                      className="list-disc ml-6 mb-4 text-gray-300 space-y-2"
+                                      {...props}
+                                    />
+                                  ),
+                                  ol: ({ node, ...props }) => (
+                                    <ol
+                                      className="list-decimal ml-6 mb-4 text-gray-300 space-y-2"
+                                      {...props}
+                                    />
+                                  ),
+                                  li: ({ node, children, ...props }) => (
+                                    <li
+                                      className="text-gray-300 pl-1"
+                                      {...props}
+                                    >
+                                      <span className="flex items-start">
+                                        <span className="mt-0">{children}</span>
+                                      </span>
+                                    </li>
+                                  ),
+
+                                  // Links
+                                  a: ({ node, ...props }) => (
+                                    <a
+                                      className="text-blue-400 hover:text-blue-300 underline"
+                                      {...props}
+                                    />
+                                  ),
+
+                                  // Blockquotes
+                                  blockquote: ({ node, ...props }) => (
+                                    <blockquote
+                                      className="border-l-4 border-gray-700 pl-4 my-4 text-gray-400 italic"
+                                      {...props}
+                                    />
+                                  ),
+
+                                  // Tables
+                                  table: ({ node, ...props }) => (
+                                    <div className="my-4 overflow-x-auto w-full">
+                                      <table
+                                        className="min-w-full divide-y divide-gray-700"
+                                        {...props}
+                                      />
+                                    </div>
+                                  ),
+                                  th: ({ node, ...props }) => (
+                                    <th
+                                      className="px-4 py-2 text-left text-gray-300 font-bold bg-gray-800/50 whitespace-nowrap"
+                                      {...props}
+                                    />
+                                  ),
+                                  td: ({ node, ...props }) => (
+                                    <td
+                                      className="px-4 py-2 text-gray-300 border-t border-gray-700 whitespace-nowrap"
+                                      {...props}
+                                    />
+                                  ),
+
+                                  // Images
+                                  img: ({ node, ...props }) => (
+                                    <img
+                                      className="max-w-full h-auto rounded-lg my-4"
+                                      loading="lazy"
+                                      {...props}
+                                    />
+                                  ),
+
+                                  // Horizontal Rule
+                                  hr: ({ node, ...props }) => (
+                                    <hr
+                                      className="my-8 border-gray-700"
+                                      {...props}
+                                    />
+                                  ),
+
+                                  // Text Formatting
+                                  em: ({ node, ...props }) => (
+                                    <em
+                                      className="italic text-gray-300"
+                                      {...props}
+                                    />
+                                  ),
+                                  strong: ({ node, ...props }) => (
+                                    <strong
+                                      className="font-bold text-gray-200"
+                                      {...props}
+                                    />
+                                  ),
+
+                                  // Pre blocks
+                                  pre: ({ node, ...props }) => (
+                                    <pre
+                                      className="bg-transparent"
+                                      {...props}
+                                    />
+                                  ),
+                                }}
                               >
-                                {String(children).replace(/\n$/, "")}
-                              </SyntaxHighlighter>
-                            ) : (
-                              <code className={className} {...props}>
-                                {children}
-                              </code>
-                            );
-                          },
-                          // Custom styling for other markdown elements
-                          h1: ({ node, ...props }) => (
-                            <h1
-                              className="text-2xl font-bold mb-4 text-white"
-                              {...props}
-                            />
-                          ),
-                          h2: ({ node, ...props }) => (
-                            <h2
-                              className="text-xl font-bold mb-3 text-white"
-                              {...props}
-                            />
-                          ),
-                          h3: ({ node, ...props }) => (
-                            <h3
-                              className="text-lg font-bold mb-2 text-white"
-                              {...props}
-                            />
-                          ),
-                          p: ({ node, ...props }) => (
-                            <p className="mb-4 text-gray-300" {...props} />
-                          ),
-                          ul: ({ node, ...props }) => (
-                            <ul
-                              className="list-disc list-inside mb-4 text-gray-300"
-                              {...props}
-                            />
-                          ),
-                          ol: ({ node, ...props }) => (
-                            <ol
-                              className="list-decimal list-inside mb-4 text-gray-300"
-                              {...props}
-                            />
-                          ),
-                          li: ({ node, ...props }) => (
-                            <li className="mb-1 text-gray-300" {...props} />
-                          ),
-                          a: ({ node, ...props }) => (
-                            <a
-                              className="text-blue-400 hover:text-blue-300 underline"
-                              {...props}
-                            />
-                          ),
-                          blockquote: ({ node, ...props }) => (
-                            <blockquote
-                              className="border-l-4 border-gray-700 pl-4 italic my-4 text-gray-400"
-                              {...props}
-                            />
-                          ),
-                          table: ({ node, ...props }) => (
-                            <div className="overflow-x-auto mb-4">
-                              <table
-                                className="min-w-full divide-y divide-gray-700"
-                                {...props}
-                              />
+                                {activeModuleContent.content}
+                              </ReactMarkdown>
                             </div>
-                          ),
-                          th: ({ node, ...props }) => (
-                            <th
-                              className="px-4 py-2 text-left text-gray-300 font-bold bg-gray-800/50"
-                              {...props}
-                            />
-                          ),
-                          td: ({ node, ...props }) => (
-                            <td
-                              className="px-4 py-2 text-gray-300 border-t border-gray-700"
-                              {...props}
-                            />
-                          ),
-                          img: ({ node, ...props }) => (
-                            <img
-                              className="max-w-full h-auto rounded-lg my-4"
-                              {...props}
-                              loading="lazy"
-                            />
-                          ),
-                          hr: ({ node, ...props }) => (
-                            <hr className="my-8 border-gray-700" {...props} />
-                          ),
-                        }}
-                      >
-                        {activeModuleContent?.content || ""}
-                      </ReactMarkdown>
+                          </FloatingEditor>
+                        ) : (
+                          <div className="prose prose-invert max-w-none">
+                            <ReactMarkdown
+                              remarkPlugins={[remarkGfm, remarkMath]}
+                              rehypePlugins={[rehypeKatex]}
+                              className="overflow-hidden"
+                              components={{
+                                code({
+                                  node,
+                                  inline,
+                                  className,
+                                  children,
+                                  ...props
+                                }) {
+                                  const match = /language-(\w+)/.exec(
+                                    className || ""
+                                  );
+                                  return !inline && match ? (
+                                    <div className="overflow-auto my-2">
+                                      <SyntaxHighlighter
+                                        style={dracula}
+                                        language={match[1]}
+                                        PreTag="div"
+                                        {...props}
+                                        className="!mt-0 !mb-0"
+                                      >
+                                        {String(children).replace(/\n$/, "")}
+                                      </SyntaxHighlighter>
+                                    </div>
+                                  ) : (
+                                    <code className={className} {...props}>
+                                      {children}
+                                    </code>
+                                  );
+                                },
+                                pre: ({ node, ...props }) => (
+                                  <pre
+                                    className="!mt-0 !mb-0 overflow-auto"
+                                    {...props}
+                                  />
+                                ),
+                                h1: ({ node, ...props }) => (
+                                  <h1
+                                    className="text-2xl font-bold mb-4"
+                                    {...props}
+                                  />
+                                ),
+                                h2: ({ node, ...props }) => (
+                                  <h2
+                                    className="text-xl font-bold mb-3"
+                                    {...props}
+                                  />
+                                ),
+                                h3: ({ node, ...props }) => (
+                                  <h3
+                                    className="text-lg font-bold mb-2"
+                                    {...props}
+                                  />
+                                ),
+                                p: ({ node, ...props }) => (
+                                  <p
+                                    className="mb-4 text-gray-300"
+                                    {...props}
+                                  />
+                                ),
+                                ul: ({ node, ...props }) => (
+                                  <ul
+                                    className="list-disc list-inside mb-4 text-gray-300 space-y-1"
+                                    {...props}
+                                  />
+                                ),
+                                ol: ({ node, ...props }) => (
+                                  <ol
+                                    className="list-decimal list-inside mb-4 text-gray-300 space-y-1"
+                                    {...props}
+                                  />
+                                ),
+                                li: ({ node, ...props }) => (
+                                  <li className="text-gray-300" {...props} />
+                                ),
+                                a: ({ node, ...props }) => (
+                                  <a
+                                    className="text-blue-400 hover:text-blue-300 underline"
+                                    {...props}
+                                  />
+                                ),
+                                blockquote: ({ node, ...props }) => (
+                                  <blockquote
+                                    className="border-l-4 border-gray-700 pl-4 italic my-4 text-gray-400"
+                                    {...props}
+                                  />
+                                ),
+                                table: ({ node, ...props }) => (
+                                  <div className="overflow-x-auto mb-4 max-w-full">
+                                    <table
+                                      className="min-w-full divide-y divide-gray-700 table-auto w-full"
+                                      {...props}
+                                    />
+                                  </div>
+                                ),
+                                th: ({ node, ...props }) => (
+                                  <th
+                                    className="px-4 py-2 text-left text-gray-300 font-bold bg-gray-800/50"
+                                    {...props}
+                                  />
+                                ),
+                                td: ({ node, ...props }) => (
+                                  <td
+                                    className="px-4 py-2 text-gray-300 border-t border-gray-700"
+                                    {...props}
+                                  />
+                                ),
+                                img: ({ node, ...props }) => (
+                                  <img
+                                    className="max-w-full h-auto rounded-lg my-4"
+                                    loading="lazy"
+                                    {...props}
+                                  />
+                                ),
+                                hr: ({ node, ...props }) => (
+                                  <hr
+                                    className="my-8 border-gray-700"
+                                    {...props}
+                                  />
+                                ),
+                              }}
+                            >
+                              {activeModuleContent?.content || ""}
+                            </ReactMarkdown>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
               </div>
             </div>
           </TabsContent>
-
+          {/* chat tab */}
+          <TabsContent value="chat">
+            <CourseChat courseId={initialCourse.id} />
+          </TabsContent>
           <TabsContent value="info">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <Card className="bg-gray-800/50 border-gray-700">
-                <CardHeader>
-                  <CardTitle className="text-white">Prerequisites</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <ul className="list-disc list-inside space-y-2 text-gray-300">
-                    {initialCourse.prerequisites.map((prereq, index) => (
-                      <li key={index}>{prereq}</li>
-                    ))}
-                  </ul>
-                </CardContent>
-              </Card>
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <Card className="bg-gray-800/50 border-gray-700">
+                  <CardHeader>
+                    <CardTitle className="text-white">Prerequisites</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <ul className="list-disc list-inside space-y-2 text-gray-300">
+                      {initialCourse.prerequisites.map((prereq, index) => (
+                        <li key={index}>{prereq}</li>
+                      ))}
+                    </ul>
+                  </CardContent>
+                </Card>
 
-              <Card className="bg-gray-800/50 border-gray-700">
-                <CardHeader>
-                  <CardTitle className="text-white">Key Takeaways</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <ul className="list-disc list-inside space-y-2 text-gray-300">
-                    {initialCourse.keyTakeaways.map((takeaway, index) => (
-                      <li key={index}>{takeaway}</li>
-                    ))}
-                  </ul>
-                </CardContent>
-              </Card>
+                <Card className="bg-gray-800/50 border-gray-700">
+                  <CardHeader>
+                    <CardTitle className="text-white">Key Takeaways</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <ul className="list-disc list-inside space-y-2 text-gray-300">
+                      {initialCourse.keyTakeaways.map((takeaway, index) => (
+                        <li key={index}>{takeaway}</li>
+                      ))}
+                    </ul>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <CourseForksTree courseId={initialCourse.id} />
             </div>
           </TabsContent>
         </Tabs>

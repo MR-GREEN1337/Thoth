@@ -1,5 +1,3 @@
-"use client";
-
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, Sparkles, BookOpen, Share2, Users, GitFork } from 'lucide-react';
@@ -14,22 +12,28 @@ import {
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
+
 const GenerateCourseDialog = ({ 
   preferences,
   onCourseGenerated 
 }: {
   preferences: {
-      expertiseLevel: any; preferenceAnalysis: string 
-};
+    expertiseLevel: any;
+    preferenceAnalysis: string;
+  };
   onCourseGenerated: (course: any) => void;
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [generationStep, setGenerationStep] = useState(0);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [courseIdea, setCourseIdea] = useState('');
+  const [inputError, setInputError] = useState('');
 
   const steps = [
-    'Analyzing learning path',
+    'Analyzing course idea',
     'Generating course structure',
     'Creating content modules',
     'Finalizing course materials'
@@ -41,7 +45,14 @@ const GenerateCourseDialog = ({
       return;
     }
 
+    if (!courseIdea.trim()) {
+      setInputError('Please enter a course idea');
+      return;
+    }
+
+    setInputError('');
     setIsGenerating(true);
+    
     try {
       // Simulate steps for visual feedback
       for (let i = 0; i < steps.length; i++) {
@@ -53,7 +64,8 @@ const GenerateCourseDialog = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          analysis: preferences.preferenceAnalysis 
+          analysis: preferences.preferenceAnalysis,
+          courseIdea: courseIdea.trim()
         })
       });
       
@@ -63,6 +75,7 @@ const GenerateCourseDialog = ({
       onCourseGenerated(course);
       toast.success('Course generated successfully!');
       setIsOpen(false);
+      setCourseIdea(''); // Reset input after successful generation
     } catch (error) {
       console.error('Error generating course:', error);
       toast.error('Failed to generate course');
@@ -96,6 +109,26 @@ const GenerateCourseDialog = ({
         <div className="space-y-6 py-4">
           {!isGenerating ? (
             <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="courseIdea" className="text-white">
+                  What would you like to learn about?
+                </Label>
+                <Input
+                  id="courseIdea"
+                  placeholder="Enter your course idea (e.g., 'Machine Learning Basics', 'Web Development')"
+                  value={courseIdea}
+                  onChange={(e) => {
+                    setCourseIdea(e.target.value);
+                    setInputError('');
+                  }}
+                  className="bg-gray-800 border-gray-700 text-white placeholder:text-gray-500"
+                  disabled={isGenerating}
+                />
+                {inputError && (
+                  <p className="text-sm text-red-400">{inputError}</p>
+                )}
+              </div>
+
               <div className="flex items-center gap-4 p-4 bg-gray-800/50 rounded-lg">
                 <BookOpen className="h-8 w-8 text-blue-400" />
                 <div>
@@ -151,7 +184,11 @@ const GenerateCourseDialog = ({
         <div className="flex justify-end gap-3">
           <Button
             variant="outline"
-            onClick={() => setIsOpen(false)}
+            onClick={() => {
+              setIsOpen(false);
+              setCourseIdea('');
+              setInputError('');
+            }}
             className="border-gray-700 text-gray-300 hover:bg-gray-800"
             disabled={isGenerating}
           >
