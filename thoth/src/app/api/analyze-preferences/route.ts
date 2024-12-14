@@ -371,6 +371,7 @@ export async function POST(req: Request) {
             break;
           case "ANALYZER":
             const analysisResult = await LearningPathAgent.analyze(state);
+            //@ts-ignore
             state = { ...state, ...analysisResult };
             break;
         }
