@@ -1,6 +1,6 @@
 "use server";
 
-import { PrismaClient } from "@prisma/client";
+import { ExpertiseLevel, PrismaClient } from "@prisma/client";
 import { hash, compare } from "bcryptjs";
 import { z } from "zod";
 
@@ -76,7 +76,7 @@ export async function signUp(formData: FormData) {
         username: parsed.username,
         password: hashedPassword,
         rawPreferences: parsed.rawPreferences,
-        expertiseLevel,
+        expertiseLevel: expertiseLevel as ExpertiseLevel,
         interests: {
           create: interests,
         },
