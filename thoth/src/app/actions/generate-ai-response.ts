@@ -35,7 +35,7 @@ export async function generateAIResponse(
     Course description: ${course.description}
     
     Key course topics:
-    ${course.modules.map(m => `- ${m.title}`).join('\n')}
+    ${course.modules.map((m: any) => `- ${m.title}`).join('\n')}
     
     Provide clear, concise answers that help students understand the course material better.`;
 
