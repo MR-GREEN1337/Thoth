@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import prisma from "@/lib/prisma";
 import { CourseClient } from "./_components/courseClient";
 import { redirect } from "next/navigation";
+import { Metadata } from 'next';
 
 async function getCourse(courseId: string) {
   const cookieStore = cookies();
@@ -62,14 +63,10 @@ async function getCourse(courseId: string) {
   };
 }
 
-export default async function CoursePage({ 
-  params 
-}: { 
-  params: { courseId: string } 
-}) {
-  const course = await getCourse(params.courseId);
-  //console.log(course)
+type PageProps = Promise<{courseId: string}>
+export default async function CoursePage(props: { params: PageProps}) {
+  const { courseId } = await props.params;
+  const course = await getCourse(courseId);
 
-  // Return the client component with the fetched data
   return <CourseClient initialCourse={course} />;
 }
