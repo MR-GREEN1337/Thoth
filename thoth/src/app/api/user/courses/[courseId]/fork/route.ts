@@ -14,7 +14,7 @@ class APIError extends Error {
     this.name = 'APIError';
   }
 }
-
+ 
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ courseId: string }> }
