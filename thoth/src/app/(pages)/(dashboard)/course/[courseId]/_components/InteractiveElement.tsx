@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
-const getDifficultyColor = (difficulty) => {
+const getDifficultyColor = (difficulty: string) => {
   switch (difficulty?.toLowerCase()) {
     case 'beginner':
       return 'text-green-400';
@@ -27,7 +27,7 @@ const getDifficultyColor = (difficulty) => {
   }
 };
 
-const getDifficultyIcon = (difficulty) => {
+const getDifficultyIcon = (difficulty: string) => {
   switch (difficulty?.toLowerCase()) {
     case 'beginner':
       return <Brain className="h-5 w-5" />;
@@ -40,7 +40,7 @@ const getDifficultyIcon = (difficulty) => {
   }
 };
 
-const getTypeIcon = (type) => {
+const getTypeIcon = (type: any) => {
   switch (type) {
     case 'quiz':
       return <CheckCircle2 className="h-5 w-5 text-emerald-500" />;
@@ -53,7 +53,7 @@ const getTypeIcon = (type) => {
   }
 };
 
-const InteractiveElement = ({ element }) => {
+const InteractiveElement = ({ element }: { element: any }) => {
   const [showSolution, setShowSolution] = useState(false);
   const [selectedAnswer, setSelectedAnswer] = useState('');
   const [isCorrect, setIsCorrect] = useState(null);
@@ -62,7 +62,7 @@ const InteractiveElement = ({ element }) => {
   const handleCheck = () => {
     if (element.type === 'quiz') {
       const correct = selectedAnswer === element.solution;
-      setIsCorrect(correct);
+      setIsCorrect(correct as any);
     }
     setShowSolution(true);
   };
@@ -108,7 +108,7 @@ const InteractiveElement = ({ element }) => {
                   onValueChange={setSelectedAnswer}
                   className="space-y-3"
                 >
-                  {element.options?.map((option, index) => (
+                  {element.options?.map((option: string, index: number) => (
                     <div 
                       key={index} 
                       className="flex items-center space-x-3 p-3 rounded-lg hover:bg-gray-700/30 transition-colors"
