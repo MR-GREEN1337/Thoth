@@ -14,18 +14,28 @@ class AISuggestionError extends Error {
   }
 }
 
-// Zod schemas
+// Enhanced Zod schemas with content type tracking
 const AiSuggestContextSchema = z.object({
   courseTitle: z.string(),
   courseDescription: z.string(),
   currentContent: z.string(),
-  moduleTitle: z.string().optional()
+  moduleTitle: z.string().optional(),
+  contentType: z.enum(['title', 'description', 'markdown', 'text']),
+  elementType: z.string().optional() // For tracking specific HTML elements if needed
 });
 
 export type AiSuggestContext = z.infer<typeof AiSuggestContextSchema>;
 
+export type AiSuggestion = {
+  version: number;
+  content: string;
+  reasoning?: string;
+  type: string;
+  changesApplied?: string[];
+};
+
 // Initialize Groq with retry logic
-const initializeGroq = async (retryCount = 0): Promise<Groq | null> => {
+export const initializeGroq = async (retryCount = 0): Promise<Groq | null> => {
   const apiKey = process.env.NEXT_PUBLIC_GROQ_API_KEY || process.env.GROQ_API_KEY;
   if (!apiKey) {
     throw new AISuggestionError(
@@ -50,24 +60,26 @@ const initializeGroq = async (retryCount = 0): Promise<Groq | null> => {
   }
 };
 
-// Helper function to create a simple suggestion response
+// Enhanced suggestion creation with type information
 const createSuggestion = (
   content: string,
   version: number,
+  type: string,
   reasoning: string = "Generated suggestion"
-) => ({
+): AiSuggestion => ({
   version,
   content,
   reasoning,
+  type,
   changesApplied: []
 });
 
-// Main suggestion generation function with retries and fallbacks
+// Main suggestion generation function with type awareness
 export const generateSuggestions = async (
   prompt: string,
   context: AiSuggestContext,
   retryCount = 0
-): Promise<Array<{ version: number; content: string; reasoning?: string }>> => {
+): Promise<AiSuggestion[]> => {
   try {
     // Validate input context
     const validContext = AiSuggestContextSchema.parse(context);
@@ -84,22 +96,26 @@ export const generateSuggestions = async (
     const systemPrompt = `You are an AI writing assistant helping to improve educational course content.
     
     CONTEXT:
+    Content Type: ${validContext.contentType}
     Course Title: "${validContext.courseTitle}"
     Course Description: "${validContext.courseDescription}"
     ${validContext.moduleTitle ? `Module: "${validContext.moduleTitle}"` : ''}
+    ${validContext.elementType ? `Element Type: "${validContext.elementType}"` : ''}
     
     CURRENT CONTENT:
     ${validContext.currentContent}
     
     INSTRUCTIONS:
     1. Generate exactly 2 alternative versions
-    2. Each version must maintain identical formatting and structure
+    2. Maintain the exact same type (${validContext.contentType}) and format as the input
     3. Keep the same approximate length (±10% maximum deviation)
-    4. Preserve all markdown formatting, lists, code blocks, and special syntax
-    5. Focus only on improving the content while keeping the same teaching objectives
+    4. For markdown: preserve all formatting, lists, code blocks, and special syntax
+    5. For titles: maintain concise, descriptive format
+    6. For descriptions: keep the same professional tone and structure
+    7. Focus only on improving the content while keeping the same objectives
     
     USER REQUEST: ${prompt}
-    RETURN ONLY the modified type content, if the request is to modify title, return ONLY the title, if the request is to modify markdown, return ONLY the markdown, if the request is to modify description, return ONLY the description.
+    RETURN ONLY the modified content matching the exact type (${validContext.contentType}).
     Respond with Version 1: and Version 2: followed by the content.`;
 
     try {
@@ -123,7 +139,11 @@ export const generateSuggestions = async (
         .slice(1)
         .map(text => text.trim())
         .filter(text => text.length > 0)
-        .map((content, index) => createSuggestion(content, index + 1));
+        .map((content, index) => createSuggestion(
+          content,
+          index + 1,
+          validContext.contentType
+        ));
 
       // Add original as third option if needed
       if (suggestions.length < 2) {
@@ -131,6 +151,7 @@ export const generateSuggestions = async (
           createSuggestion(
             validContext.currentContent,
             suggestions.length + 1,
+            validContext.contentType,
             "Original content"
           )
         );
@@ -139,24 +160,22 @@ export const generateSuggestions = async (
       return suggestions;
 
     } catch (error: any) {
-      // Handle specific Groq API errors
       if (error?.response?.status === 503) {
         if (retryCount < 3) {
           await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
           return generateSuggestions(prompt, context, retryCount + 1);
         }
         
-        // Fallback response if all retries fail
         return [
-          createSuggestion(validContext.currentContent, 1, "Original content (AI service unavailable)"),
+          createSuggestion(validContext.currentContent, 1, validContext.contentType, "Original content (AI service unavailable)"),
           createSuggestion(
             validContext.currentContent,
             2,
+            validContext.contentType,
             "Please try again later - AI service is temporarily unavailable"
           )
         ];
       }
-
       throw error;
     }
 
@@ -173,7 +192,6 @@ export const generateSuggestions = async (
       throw error;
     }
 
-    // Log unexpected errors but return a user-friendly message
     console.error('AI suggestion error:', error);
     throw new AISuggestionError(
       'Failed to generate suggestions. Please try again later.',
@@ -183,5 +201,4 @@ export const generateSuggestions = async (
   }
 };
 
-// Export error type for frontend handling
 export type { AISuggestionError };

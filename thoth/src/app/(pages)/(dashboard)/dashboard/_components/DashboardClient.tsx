@@ -108,6 +108,7 @@ export default function DashboardClient({ initialPreferences }: DashboardClientP
             : "Failed to delete course"
         )
       }
+      router.refresh()
       return courseId
     },
     onMutate: (courseId) => {
@@ -150,7 +151,6 @@ export default function DashboardClient({ initialPreferences }: DashboardClientP
         id: "generate",
       })
       queryClient.invalidateQueries({ queryKey: ["userCourses"] })
-      router.refresh()
     },
     onError: () => {
       toast.error("❌ Failed to generate learning path", { id: "generate" })

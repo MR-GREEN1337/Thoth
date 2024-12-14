@@ -9,7 +9,7 @@ export async function POST(
   try {
     const cookieStore = await cookies();
     const userId = cookieStore.get("token")?.value;
-    const courseId = params.courseId;
+    const courseId = (await params).courseId;
 
     if (!userId) {
       return NextResponse.json(

@@ -56,7 +56,8 @@ src/
 │   │       │       │   ├── CourseChat.tsx
 │   │       │       │   ├── courseClient.tsx
 │   │       │       │   ├── CourseForkTree.tsx
-│   │       │       │   └── EditableSection.tsx
+│   │       │       │   ├── EditableSection.tsx
+│   │       │       │   └── InteractiveElement.tsx
 │   │       │       └── page.tsx
 │   │       ├── dashboard
 │   │       │   ├── _components
@@ -128,6 +129,9 @@ src/
 │       ├── toggle-group.tsx
 │       ├── toggle.tsx
 │       └── tooltip.tsx
+├── helpers
+│   ├── GithubRepoLoader.ts
+│   └── LanguageDetector.ts
 ├── hooks
 │   ├── use-community-courses.ts
 │   ├── use-course-messages.ts
@@ -137,6 +141,7 @@ src/
 │   └── use-user-courses.ts
 ├── lib
 │   ├── auth.ts
+│   ├── fallbackRepos.ts
 │   ├── prisma.ts
 │   └── utils.ts
 ├── middleware.ts
@@ -144,4 +149,4 @@ src/
     ├── course.ts
     └── preferences.ts
 
-40 directories, 105 files
+41 directories, 109 files

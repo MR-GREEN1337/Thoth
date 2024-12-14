@@ -7,7 +7,9 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { cookies } from "next/headers";
 import { WikipediaQueryRun } from "@langchain/community/tools/wikipedia_query_run";
-import { GithubRepoLoader } from "@langchain/community/document_loaders/web/github";
+import { FALLBACK_REPOS, SupportedLanguage } from '@/lib/fallbackRepos';
+import { EnhancedGithubLoader } from '@/helpers/GithubRepoLoader';
+import { CodeContentGenerator, LanguageDetector } from "@/helpers/LanguageDetector";
 
 // Initialize API clients
 const groq = new Groq({
@@ -89,7 +91,7 @@ class SearchResultsHandler {
       // If string, try to parse it
       if (typeof results === 'string') {
         try {
-          const parsed = JSON.parse(results);
+          const parsed = JSON.parse(this.cleanJsonResponse(results));
           return this.normalizeSearchResults(parsed);
         } catch {
           console.warn('Failed to parse search results string');
@@ -111,77 +113,125 @@ class SearchResultsHandler {
 
   static cleanJsonResponse(text: string): string {
     if (!text || typeof text !== 'string') {
-        return '{}';
+      return '[]';
     }
-
+  
     try {
-        // Remove markdown code block markers and language indicators
-        let cleaned = text.replace(/^```(?:json)?\s*|\s*```$/g, '');
-
-        // Enhanced cleaning
-        cleaned = cleaned
-            .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // Remove control characters
-            .replace(/\\(?!["\\/bfnrt])/g, '\\\\')  // Fix invalid escape sequences
-            .replace(/[\u201C\u201D]/g, '"')  // Fix smart quotes
-            .replace(/[\u2018\u2019]/g, "'")  // Fix smart single quotes
-            .replace(/(\r\n|\n|\r)/gm, '')    // Remove newlines
-            .replace(/\s+/g, ' ')             // Normalize whitespace
-            .trim();
-
-        // More robust JSON object extraction
-        const jsonMatch = cleaned.match(/(\{[\s\S]*\})/);
-        if (jsonMatch) {
-            cleaned = jsonMatch[1];
-            // Validate structure by counting braces
-            let openBraces = 0;
-            let isValid = true;
-            for (let char of cleaned) {
-                if (char === '{') openBraces++;
-                if (char === '}') openBraces--;
-                if (openBraces < 0) {
-                    isValid = false;
-                    break;
-                }
-            }
-            if (!isValid || openBraces !== 0) {
-                throw new Error('Unbalanced braces in JSON');
-            }
+      // First handle code block format
+      if (text.includes('```')) {
+        const matches = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+        if (matches && matches[1]) {
+          text = matches[1].trim();
         }
-
-        // Test parse
-        JSON.parse(cleaned);
-        return cleaned;
+      }
+  
+      // Check if we already have valid JSON
+      try {
+        JSON.parse(text);
+        return text;
+      } catch {
+        // Continue with cleaning if direct parse fails
+      }
+  
+      // Clean the text while preserving structure
+      let cleaned = text
+        .replace(/^```(?:json)?\s*|\s*```$/g, '')
+        .replace(/[\u201C\u201D]/g, '"')
+        .replace(/[\u2018\u2019]/g, "'")
+        .replace(/\r?\n/g, ' ')
+        .replace(/,\s*([\]}])/g, '$1')
+        .trim();
+  
+      // Make sure it starts and ends properly
+      if (!cleaned.startsWith('{') && !cleaned.startsWith('[')) {
+        const firstBrace = cleaned.indexOf('{');
+        const firstBracket = cleaned.indexOf('[');
+        if (firstBrace >= 0 || firstBracket >= 0) {
+          const startIndex = Math.min(
+            firstBrace >= 0 ? firstBrace : Infinity,
+            firstBracket >= 0 ? firstBracket : Infinity
+          );
+          cleaned = cleaned.substring(startIndex);
+        }
+      }
+  
+      // Test parse before returning
+      JSON.parse(cleaned);
+      return cleaned;
     } catch (error) {
-        console.error('JSON cleaning failed:', error);
-        console.error('Original text:\n', text);
-        return '{}';
+      // If cleaning fails, return valid empty JSON structure based on context
+      console.warn('JSON cleaning failed:', error);
+      return text.includes('[') ? '[]' : '{}';
     }
-}
-
-static safeParseJson<T>(text: string, context: string = ''): T | null {
+  }
+  
+  static safeParseJson<T>(text: string, context: string = ''): T | null {
     try {
-        const cleaned = this.cleanJsonResponse(text);
-        
-        // Additional validation for empty or invalid JSON
-        if (cleaned === '{}' || !cleaned) {
-            console.error(`Empty or invalid JSON for ${context}`);
-            return null;
+      // Handle code block format explicitly
+      if (text.includes('```')) {
+        const matches = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+        if (matches && matches[1]) {
+          text = matches[1].trim();
         }
-
-        const parsed = JSON.parse(cleaned) as T;
-        
-        // Basic structure validation
-        if (!parsed || typeof parsed !== 'object') {
-            throw new Error('Parsed result is not an object');
-        }
-
-        return parsed;
-    } catch (error) {
-        console.error(`JSON parsing failed for ${context}:`, error);
-        console.error('Original text:', text);
+      }
+  
+      const cleaned = this.cleanJsonResponse(text);
+      
+      // Additional validation for empty or invalid JSON
+      if (cleaned === '{}' || cleaned === '[]' || !cleaned) {
+        console.warn(`Empty or invalid JSON for ${context}`);
         return null;
+      }
+  
+      return JSON.parse(cleaned) as T;
+    } catch (error) {
+      console.warn(`JSON parsing failed for ${context}:`, error);
+      return null;
     }
-}
+  }
+  
+  static extractJSON(text: string): any {
+    try {
+      // Handle code block format first
+      if (text.includes('```')) {
+        const matches = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+        if (matches && matches[1]) {
+          text = matches[1].trim();
+        }
+      }
+  
+      // Try direct parse first
+      try {
+        return JSON.parse(text);
+      } catch {
+        // Continue with cleaning if direct parse fails
+      }
+  
+      // Find JSON structure
+      const jsonMatch = text.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+      if (!jsonMatch) {
+        throw new Error('No JSON structure found');
+      }
+  
+      const cleaned = this.cleanJsonResponse(jsonMatch[1]);
+      return JSON.parse(cleaned);
+    } catch (error) {
+      console.error('JSON extraction failed:', error);
+      // Return appropriate empty structure
+      return text.includes('[') ? [] : {};
+    }
+  }
+
+  static validateStructure(json: any, requiredFields: string[]): boolean {
+    if (!json || typeof json !== 'object') {
+      return false;
+    }
+
+    return requiredFields.every(field => {
+      const value = json[field];
+      return value !== undefined && value !== null;
+    });
+  }
 }
 
 // Content type detection and processing functions
@@ -282,8 +332,7 @@ Return JSON with these fields:
   "complexityLevel": number (1-5),
   "visualizationNeeds": [string]
 }
-RETURN ONLY THE JSON, NOTHING ELSE!!! NO EXPLANATORY TEXT, JUST A PLAIN JSON!!!!  
-`;
+RETURN ONLY THE JSON, NOTHING ELSE!!! NO EXPLANATORY TEXT, JUST A PLAIN JSON!!!!`;
 
     const completion = await groq.chat.completions.create({
       messages: [{ role: "user", content: prompt }],
@@ -291,17 +340,31 @@ RETURN ONLY THE JSON, NOTHING ELSE!!! NO EXPLANATORY TEXT, JUST A PLAIN JSON!!!!
       temperature: 0.3,
     });
 
-    const result = this.extractJSON(
+    const result = SearchResultsHandler.safeParseJson(
       completion.choices[0]?.message?.content || "{}",
       "detectSubjectType"
     );
 
-    // Provide default values if parsing fails
-    return result || {
-      requiresLatex: false,
-      requiresCode: false,
-      primaryContentType: "MARKDOWN",
-      suggestedTools: [],
+    // Validate required fields and provide defaults if missing
+    if (!result || !SearchResultsHandler.validateStructure(result, [
+      'requiresLatex',
+      'requiresCode',
+      'primaryContentType',
+      'suggestedTools'
+    ])) {
+      return {
+        requiresLatex: false,
+        requiresCode: false,
+        primaryContentType: "MARKDOWN",
+        suggestedTools: [],
+      };
+    }
+
+    return {
+      requiresLatex: (result as any).requiresLatex,
+      requiresCode: (result as any).requiresCode,
+      primaryContentType: (result as any).primaryContentType,
+      suggestedTools: (result as any).suggestedTools,
     };
   }
 
@@ -313,8 +376,6 @@ RETURN ONLY THE JSON, NOTHING ELSE!!! NO EXPLANATORY TEXT, JUST A PLAIN JSON!!!!
     const academicSearch = (await tavilyTool.invoke(
       `${topic} mathematical equations formulas academic`
     )).substring(0, 1000);
-
-    console.log("Academic search Result:", academicSearch);
 
     const prompt = `Generate LaTeX content for this mathematical/scientific topic:
 Topic: ${topic}
@@ -346,10 +407,8 @@ Return JSON with:
     }
   ]
 }
-  
-  RETURN ONLY THE JSON, NOTHING ELSE, NO TEXT OR ANYTHING, JUST A JSON!!!! 
-  
-  `;
+
+RETURN ONLY THE JSON, NOTHING ELSE, NO TEXT OR ANYTHING, JUST A JSON!!!!`;
 
     const completion = await groq.chat.completions.create({
       messages: [{ role: "user", content: prompt }],
@@ -357,10 +416,33 @@ Return JSON with:
       temperature: 0.2,
     });
 
-    return this.extractJSON(
+    const result = SearchResultsHandler.safeParseJson(
       completion.choices[0]?.message?.content || "{}",
       "generateLatexContent"
     );
+
+    // Validate LaTeX content structure and provide defaults if missing
+    if (!result || !SearchResultsHandler.validateStructure(result, ['equations', 'conceptualBreakdown'])) {
+      return {
+        equations: [],
+        conceptualBreakdown: []
+      };
+    }
+
+    return result;
+  }
+
+  private static getFallbackRepos(language: string): GitHubRepo[] {
+    const normalizedLang = language.toLowerCase();
+    const fallbacks = FALLBACK_REPOS[normalizedLang as keyof typeof FALLBACK_REPOS];
+    
+    if (!fallbacks) {
+      console.warn(`No fallback repositories found for language: ${language}`);
+      // Return JavaScript fallbacks as ultimate fallback
+      return [...FALLBACK_REPOS.javascript];
+    }
+    
+    return [...fallbacks];
   }
 
   private static async findRelevantRepositories(
@@ -377,11 +459,10 @@ Return JSON with:
         searchResults = await tavilyTool.invoke(searchQuery);
       } catch (error) {
         console.error('Search failed:', error);
-        return [];
+        return this.getFallbackRepos(language);
       }
       
       const repos: GitHubRepo[] = [];
-
       
       for (const result of searchResults) {
         if (!result?.url || typeof result.url !== 'string') {
@@ -389,11 +470,9 @@ Return JSON with:
         }
   
         try {
-          // Parse the GitHub URL
           const url = new URL(result.url);
           const pathParts = url.pathname.split('/').filter(part => part);
           
-          // We need at least owner/repo in the path
           if (pathParts.length < 2) {
             continue;
           }
@@ -401,15 +480,12 @@ Return JSON with:
           const owner = pathParts[0];
           const name = pathParts[1];
           
-          // Skip if this is not a repository URL
           if (!owner || !name || name === 'search' || name === 'trending') {
             continue;
           }
           
-          // Construct clean repository URL
           const cleanUrl = `https://github.com/${owner}/${name}`;
           
-          // Parse stars from content with improved regex
           let stars = 0;
           if (result.content) {
             const starsMatch = result.content.match(/(\d+(?:\.\d+)?k?)\s*stars?/i);
@@ -423,7 +499,6 @@ Return JSON with:
             }
           }
           
-          // Only add repositories that have some metadata
           if (stars > 0 || result.content) {
             repos.push({
               url: cleanUrl,
@@ -439,124 +514,33 @@ Return JSON with:
         }
       }
       
-      // Sort by stars and return top results
-      return repos
-        .sort((a, b) => b.stars - a.stars)
-        .slice(0, maxResults);
+      // Sort by stars
+      const sortedRepos = repos.sort((a, b) => b.stars - a.stars);
+      
+      // If we don't have enough repositories, use fallback repos
+      if (sortedRepos.length < maxResults) {
+        console.log('Not enough GitHub repos found, using fallback repositories');
+        const fallbackRepos = this.getFallbackRepos(language);
+        
+        // Combine unique repos preferring found repos over fallbacks
+        const combinedRepos = [...sortedRepos];
+        for (const fallback of fallbackRepos) {
+          if (!combinedRepos.some(repo => repo.url === fallback.url)) {
+            combinedRepos.push(fallback);
+          }
+          if (combinedRepos.length >= maxResults) {
+            break;
+          }
+        }
+        return combinedRepos;
+      }
+      
+      return sortedRepos.slice(0, maxResults);
         
     } catch (error) {
       console.error('Error finding repositories:', error);
-      return [];
-    }
-  }
-
-  static async generateCodeContent(topic: string, language: string): Promise<any> {
-    try {
-      // Find relevant repositories
-      const repos = await this.findRelevantRepositories(topic, language);
-      console.log('Found repositories:', repos);
-
-      // Load content from each repository
-      const repoContents = await Promise.all(
-        repos.map(async (repo) => {
-          try {
-            const repoLoader = new GithubRepoLoader(
-              repo.url,
-              {
-                branch: "main",
-                recursive: false,
-                maxConcurrency: 5,
-                ignorePaths: [
-                  "*.md",
-                  "*.json",
-                  "*.git*",
-                  "test*",
-                  "docs*",
-                  "example*"
-                ]
-              }
-            );
-            
-            const docs = await repoLoader.load();
-            return {
-              repo,
-              content: docs,
-              error: null
-            };
-          } catch (error) {
-            console.error(`Error loading repo ${repo.url}:`, error);
-            return {
-              repo,
-              content: [],
-              error: error instanceof Error ? error.message : 'Unknown error'
-            };
-          }
-        })
-      );
-
-      // Additional search for best practices and tutorials
-      const searchResults = await tavilyTool.invoke(
-        `${topic} ${language} programming tutorial best practices 2024`
-      );
-
-      const prompt = `Generate programming content for:
-Topic: ${topic}
-Language: ${language}
-Found Repositories: ${JSON.stringify(repos)}
-Repository Contents: ${JSON.stringify(repoContents.map(rc => ({
-  repo: rc.repo.name,
-  contentSummary: rc.content.slice(0, 500)
-})))}
-Current Best Practices: ${JSON.stringify(searchResults)}
-
-Requirements:
-1. Modern, production-quality code examples
-2. Clear explanations and comments
-3. Best practices and patterns
-4. Common pitfalls to avoid
-5. Testing approaches
-6. Performance considerations
-
-Return JSON with:
-{
-  "examples": [
-    {
-      "code": "code snippet",
-      "explanation": "detailed explanation",
-      "bestPractices": ["practices used"],
-      "commonMistakes": ["things to avoid"],
-      "testingApproach": "how to test",
-      "sourceRepo": "repository name if derived from example"
-    }
-  ],
-  "conceptualFramework": {
-    "keyIdeas": ["main concepts"],
-    "designPatterns": ["relevant patterns"],
-    "architecturalConsiderations": ["important considerations"]
-  },
-  "referencedRepositories": [{
-    "name": "repo name",
-    "url": "repo url",
-    "usageContext": "how this repo's patterns were used"
-  }]
-}
-  
-RETURN ONLY THE JSON, JUST THE JSON, NOTHING ELSE. MY LIFE DEPENDS ON THIS.
-`;
-
-      const completion = await groq.chat.completions.create({
-        messages: [{ role: "user", content: prompt }],
-        model: "llama-3.2-90b-vision-preview",
-        temperature: 0.3,
-      });
-
-      return this.extractJSON(
-        completion.choices[0]?.message?.content || "{}",
-        "generateCodeContent"
-      );
-    } catch (error) {
-      console.error("Error generating code content:", error);
-      throw error;
+      // Return fallback repos on error
+      return this.getFallbackRepos(language);
     }
   }
 }
@@ -830,7 +814,8 @@ PLEASE RETURN ONLY A JSON, NOTHING ELSE, NO EXPLANATORY TEXT, JUST THE PLAIN JSO
         successfulModules: 0,
         failedModules: 0,
         totalTokensUsed: 0,
-        errors: [] as string[]
+        errors: [] as string[],
+        duration: 0
       };
   
       const enrichedModules = await Promise.all(
@@ -853,10 +838,7 @@ PLEASE RETURN ONLY A JSON, NOTHING ELSE, NO EXPLANATORY TEXT, JUST THE PLAIN JSO
   
             // 2. Gather relevant content from multiple sources
             const [searchResults, wikiContent] = await Promise.all([
-              // Search for tutorials and examples
               this.searchContent(`${module.title} course content tutorial examples projects`),
-              
-              // Get Wikipedia context if available
               wikipediaTool.invoke(module.title).catch(() => null)
             ]);
   
@@ -866,7 +848,33 @@ PLEASE RETURN ONLY A JSON, NOTHING ELSE, NO EXPLANATORY TEXT, JUST THE PLAIN JSO
             let latexContent = [];
   
             // 3. Generate specialized content based on type
-            if (contentType.requiresLatex) {
+            if (contentType.requiresCode) {
+              try {
+                const languageAnalysis = await LanguageDetector.detectLanguage(module.title);
+                
+                const codeContent = await CodeContentGenerator.generateLanguageSpecificCode(
+                  module.title,
+                  languageAnalysis.language as SupportedLanguage,
+                  {
+                    difficulty: state.analysis?.expertiseLevel === 'BEGINNER' ? 'BEGINNER' : 
+                               state.analysis?.expertiseLevel === 'ADVANCED' ? 'ADVANCED' : 'INTERMEDIATE',
+                    contentType: "TUTORIAL",
+                    includeTests: true,
+                    topics: searchResults.map(result => result.title.toLowerCase().split(' ')).flat()
+                  }
+                );
+  
+                specializedContent = codeContent;
+                codeExamples = codeContent.mainContent.code;
+  
+                contentPrompt = `Create comprehensive programming module content...`;
+  
+              } catch (error) {
+                console.error(`Code content generation failed for module ${index}:`, error);
+                metrics.errors.push(`Module ${index} code generation: ${error}`);
+              }
+  
+            } else if (contentType.requiresLatex) {
               const latexResult = await ContentTypeDetector.generateLatexContent(
                 module.title,
                 {
@@ -879,146 +887,51 @@ PLEASE RETURN ONLY A JSON, NOTHING ELSE, NO EXPLANATORY TEXT, JUST THE PLAIN JSO
               });
   
               if (latexResult) {
-                specializedContent = SearchResultsHandler.safeParseJson(
-                  latexResult,
-                  'LaTeX content'
-                );
-                latexContent = specializedContent?.equations || [];
+                specializedContent = latexResult;
+                latexContent = latexResult.equations || [];
               }
   
-              contentPrompt = `Create comprehensive module content combining LaTeX and explanations:
-  Title: "${module.title}"
-  Duration: ${module.duration} minutes
-  Content Type: Mathematics/Science
-  Primary Audience Level: ${state.analysis?.expertiseLevel || 'BEGINNER'}
-  
-  LaTeX Content: ${JSON.stringify(specializedContent)}
-  Wikipedia Context: ${wikiContent}
-  Search Results: ${JSON.stringify(searchResults)}
-  
-  Requirements:
-  1. Start with fundamental concepts
-  2. Include step-by-step derivations
-  3. Provide practical examples
-  4. Add knowledge check questions
-  5. Include visual suggestions
-  6. Reference real-world applications
-  
-  Format in clear MARKDOWN with LaTeX equations.`;
-  
-            } else if (contentType.requiresCode) {
-              // Find relevant code repositories
-              const codeResult = await ContentTypeDetector.generateCodeContent(
-                module.title,
-                "python" // Could be dynamic based on course needs
-              ).catch(error => {
-                console.warn(`Code generation failed for module ${index}:`, error);
-                return null;
-              });
-  
-              if (codeResult) {
-                specializedContent = SearchResultsHandler.safeParseJson(
-                  codeResult,
-                  'Code content'
-                );
-                codeExamples = specializedContent?.examples || [];
-              }
-  
-              contentPrompt = `Create comprehensive programming module content:
-  Title: "${module.title}"
-  Duration: ${module.duration} minutes
-  Content Type: Programming/Technical
-  Primary Audience Level: ${state.analysis?.expertiseLevel || 'BEGINNER'}
-  
-  Code Examples: ${JSON.stringify(codeExamples)}
-  Search Results: ${JSON.stringify(searchResults)}
-  
-  Requirements:
-  1. Start with concept explanation
-  2. Provide working code examples
-  3. Include best practices
-  4. Add debugging tips
-  5. Include practical exercises
-  6. Reference industry standards
-  
-  Format in clear MARKDOWN with code blocks.`;
-  
+              contentPrompt = `Create comprehensive module content combining LaTeX and explanations...`;
+              
             } else {
-              // General content
-              contentPrompt = `Create comprehensive module content:
-  Title: "${module.title}"
-  Duration: ${module.duration} minutes
-  Content Type: ${contentType.primaryContentType}
-  Primary Audience Level: ${state.analysis?.expertiseLevel || 'BEGINNER'}
-  
-  Context:
-  ${wikiContent ? `Wikipedia: ${wikiContent}\n` : ''}
-  Search Results: ${JSON.stringify(searchResults)}
-  
-  Requirements:
-  1. Clear learning objectives
-  2. Engaging explanations
-  3. Real-world examples
-  4. Interactive exercises
-  5. Knowledge checks
-  6. Industry relevance
-  7. Clear section structure
-  
-  Format in clear, well-structured MARKDOWN.`;
+              contentPrompt = `Create comprehensive module content for:
+              Title: "${module.title}"
+              Duration: ${module.duration} minutes
+              Content Type: ${contentType.primaryContentType}
+              Primary Audience Level: ${state.analysis?.expertiseLevel || 'BEGINNER'}
+              
+              Include:
+              1. Clear learning objectives
+              2. Detailed explanations
+              3. Real-world examples
+              4. Best practices
+              5. Common pitfalls
+              6. Practice exercises
+              
+              Format in clear MARKDOWN.`;
             }
   
-            // 4. Generate main content with retries
-            let content = '';
-            let attempts = 0;
-            const maxAttempts = 3;
-
-            const userAnalysis = state.marketResearch.userContext;
-            const existingKnowledge = new Set(userAnalysis.expertise.knownConcepts);
-            
-            contentPrompt = `${contentPrompt}
-
-User Context:
-- Expertise Level: ${userAnalysis.preferences.expertiseLevel}
-- Known Concepts: ${Array.from(existingKnowledge).join(', ')}
-- Knowledge Gaps: ${userAnalysis.gaps.missingConcepts.join(', ')}
-- Weekly Study Hours: ${userAnalysis.preferences.weeklyHours}
-
-Requirements:
-1. Focus on filling knowledge gaps
-2. Avoid repeating known concepts
-3. Match expertise level
-4. Align with available study time
-5. Build on existing knowledge
-6. Provide unique insights`;
-  
-            while (!content && attempts < maxAttempts) {
-              try {
-                const completion = await groq.chat.completions.create({
-                  messages: [{ role: "user", content: contentPrompt }],
-                  model: "llama-3.2-90b-vision-preview",
-                  temperature: 0.3,
-                  max_tokens: 8192,
-                });
-  
-                content = completion.choices[0]?.message?.content || '';
-                metrics.totalTokensUsed += completion.usage?.total_tokens || 0;
-                
-                // Validate content
-                if (content.length < 100) {
-                  throw new Error('Generated content too short');
+            // 4. Generate main content
+            const completion = await groq.chat.completions.create({
+              messages: [
+                { 
+                  role: "system", 
+                  content: "You are a course content generator. Create clear, engaging educational content."
+                },
+                { 
+                  role: "user", 
+                  content: contentPrompt
                 }
-              } catch (error) {
-                console.warn(`Content generation attempt ${attempts + 1} failed:`, error);
-                attempts++;
-                await new Promise(resolve => setTimeout(resolve, 1000 * attempts)); // Exponential backoff
-              }
-            }
+              ],
+              model: "llama-3.2-90b-vision-preview",
+              temperature: 0.3,
+              max_tokens: 8192,
+            });
   
-            if (!content) {
-              throw new Error(`Failed to generate content after ${maxAttempts} attempts`);
-            }
+            const content = completion.choices[0]?.message?.content || '';
+            metrics.totalTokensUsed += completion.usage?.total_tokens || 0;
   
-            // 5. Generate interactive elements
+            // 5. Generate interactive elements for EVERY module
             const interactiveElements = await this.generateInteractiveElements(
               module.title,
               content,
@@ -1041,14 +954,16 @@ Requirements:
               revisionHistory: [],
               contentType: contentType.primaryContentType,
               specializedContent,
-              latexContent,
-              codeExamples,
-              interactiveElements,
+              codeExamples: contentType.requiresCode ? codeExamples : undefined,
+              latexContent: contentType.requiresLatex ? latexContent : undefined,
+              interactiveElements, // Now properly included for each module
               metadata: {
                 generatedAt: new Date().toISOString(),
                 contentLength: content.length,
-                attempts,
-                hasSpecializedContent: !!specializedContent
+                hasSpecializedContent: !!specializedContent,
+                programmingLanguage: contentType.requiresCode ? 
+                  specializedContent?.metadata?.language : undefined,
+                interactiveElementsCount: interactiveElements.length
               }
             };
   
@@ -1057,13 +972,13 @@ Requirements:
             metrics.failedModules++;
             metrics.errors.push(`Module ${index} (${module.title}): ${(moduleError as any).message}`);
   
-            // Return module with error state
             return {
               ...module,
               content: "Content generation failed. Please retry generation for this module.",
               aiGenerated: true,
               qualityScore: 0,
               contentType: "MARKDOWN",
+              interactiveElements: [], // Include empty array for failed modules
               generationError: (moduleError as any).message,
               metadata: {
                 generatedAt: new Date().toISOString(),
@@ -1076,7 +991,6 @@ Requirements:
         })
       );
   
-      // Calculate generation metrics
       metrics.duration = Date.now() - metrics.startTime;
       
       const enrichedCourse = {
@@ -1086,12 +1000,15 @@ Requirements:
           ...metrics,
           successRate: metrics.successfulModules / courseStructure.modules.length,
           averageTokensPerModule: metrics.totalTokensUsed / courseStructure.modules.length,
+          totalInteractiveElements: enrichedModules.reduce(
+            (sum, module) => sum + (module.interactiveElements?.length || 0), 
+            0
+          ),
           timestamp: new Date().toISOString()
         }
       };
   
-      // Determine next step based on success rate
-      const successThreshold = 0.7; // 70% success rate required
+      const successThreshold = 0.7;
       const next = enrichedCourse.generationMetrics.successRate >= successThreshold 
         ? "QUALITY_CHECK" 
         : "ERROR";
@@ -1115,7 +1032,7 @@ Requirements:
       };
     }
   }
-  
+
 private static async analyzeUserHistory(userId: string): Promise<{
   preferences: any,
   expertise: any,
@@ -1238,7 +1155,7 @@ private static async analyzeUserHistory(userId: string): Promise<{
         'Interactive elements'
       );
   
-      return result?.elements || [];
+      return (result as any)?.elements || [];
     } catch (error) {
       console.error("Failed to generate interactive elements:", error);
       return [];
@@ -1609,7 +1526,7 @@ const AgentState = Annotation.Root({
 
 const RequestSchema = z.object({
   analysis: z.any(),
-  courseIdea: z.string().min(1, "Course idea is required")
+  courseIdea: z.string().optional()
 });
 
 export async function POST(req: Request) {
@@ -1633,7 +1550,7 @@ export async function POST(req: Request) {
       messages: [],
       userId,
       analysis,
-      courseIdea, // Add course idea to initial state
+      courseIdea: courseIdea || "", // Add course idea to initial state
       marketResearch: null,
       courseStructure: null,
       courseContent: null,
@@ -1747,6 +1664,7 @@ export async function POST(req: Request) {
             duration: module.duration,
             aiGenerated: module.aiGenerated,
             aiPrompt: module.aiPrompt,
+            interactiveElements: module.interactiveElements // Store interactive elements
           })),
         },
 
@@ -1774,7 +1692,10 @@ export async function POST(req: Request) {
         marketTrend: true,
       },
     });
-
+    // Log Interactive Elements
+    for (const module of state.courseContent.modules) {
+    console.log("Interactive Elements:", module.interactiveElements);
+    }
     // Format and return the final response
     const response = {
       course,

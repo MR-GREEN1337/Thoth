@@ -145,6 +145,9 @@ model Module {
   searchResults  Json?  // Stored search results
   youtubeUrls   String[] // Array of YouTube URLs
   
+  // Interactive elements
+  interactiveElements Json? // Array of interactive elements
+
   // Relations
   course      Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
   courseId    String

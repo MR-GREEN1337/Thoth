@@ -87,7 +87,7 @@ export async function DELETE(
     }
 
     const userId = token.value;
-    const courseId = params.courseId;
+    const courseId = (await params).courseId;
 
     // Verify course exists and user owns it
     const course = await prisma.course.findUnique({

@@ -68,6 +68,7 @@ export default async function CoursePage({
   params: { courseId: string } 
 }) {
   const course = await getCourse((await params).courseId);
+  //console.log(course)
 
   // Return the client component with the fetched data
   return <CourseClient initialCourse={course} />;

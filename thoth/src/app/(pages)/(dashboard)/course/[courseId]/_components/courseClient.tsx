@@ -36,6 +36,7 @@ import Cookies from "js-cookie";
 import CourseChat from "./CourseChat";
 import CourseForksTree from "./CourseForkTree";
 import React from "react";
+import ModuleInteractiveElements from "./InteractiveElement";
 
 interface Module {
   id: string;
@@ -86,30 +87,7 @@ interface Module {
   requiresLatex?: boolean;
 }
 
-const MathDisplay = ({ content }: { content: MathContent }) => {
-  return (
-    <div className="my-6 p-4 bg-gray-800/30 rounded-lg border border-gray-700">
-      <div className="mb-4">
-        <div className="text-lg font-semibold text-blue-400 mb-2">
-          {content.type.charAt(0).toUpperCase() + content.type.slice(1)}
-        </div>
-        <div className="latex-container overflow-x-auto p-4 bg-gray-900/50 rounded">
-          {content.latex}
-        </div>
-      </div>
-      {content.explanation && (
-        <div className="mt-4 text-gray-300">{content.explanation}</div>
-      )}
-      {content.reference && (
-        <div className="mt-2 text-sm text-gray-400">
-          Reference: {content.reference}
-        </div>
-      )}
-    </div>
-  );
-};
-
-export function CourseClient({ initialCourse }: CourseClientProps) {
+export function CourseClient({ initialCourse }: { initialCourse: any }) {
   const router = useRouter();
   const [activeModule, setActiveModule] = useState<string | null>(
     initialCourse?.modules[0]?.id || null
@@ -180,8 +158,10 @@ export function CourseClient({ initialCourse }: CourseClientProps) {
   };
 
   const activeModuleContent = initialCourse.modules.find(
-    (m) => m.id === activeModule
+    (m: { id: string | null; }) => m.id === activeModule
   );
+
+  console.log("haha", activeModuleContent)
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 p-4 md:p-8">
@@ -376,7 +356,7 @@ export function CourseClient({ initialCourse }: CourseClientProps) {
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
               {/* Module List */}
               <div className="space-y-2">
-                {initialCourse.modules.map((module) => (
+                {initialCourse.modules.map((module: { id: string; title: string; duration: number }) => (
                   <Card
                     key={module.id}
                     className={`bg-gray-800/50 border-gray-700 cursor-pointer transition-colors ${
@@ -464,9 +444,8 @@ export function CourseClient({ initialCourse }: CourseClientProps) {
                                       </code>
                                     );
                                   },
-
                                   // Math blocks
-                                  math: ({ value }) => (
+                                  mpath: ({ value }: { value: string }) => (
                                     <span className="block my-4 overflow-x-auto">
                                       <span className="latex-container inline-block bg-gray-900/50 p-4 rounded">
                                         {value}
@@ -475,7 +454,7 @@ export function CourseClient({ initialCourse }: CourseClientProps) {
                                   ),
 
                                   // Inline math
-                                  inlineMath: ({ value }) => (
+                                  inlineMath: ({ value }: { value: string }) => (
                                     <span className="latex-inline">
                                       {value}
                                     </span>
@@ -758,6 +737,13 @@ export function CourseClient({ initialCourse }: CourseClientProps) {
                             >
                               {activeModuleContent?.content || ""}
                             </ReactMarkdown>
+                              <div className="mt-8">
+                                <ModuleInteractiveElements
+                                  elements={
+                                    activeModuleContent.interactiveElements
+                                  }
+                                />
+                              </div>
                           </div>
                         )}
                       </div>
@@ -780,7 +766,7 @@ export function CourseClient({ initialCourse }: CourseClientProps) {
                   </CardHeader>
                   <CardContent>
                     <ul className="list-disc list-inside space-y-2 text-gray-300">
-                      {initialCourse.prerequisites.map((prereq, index) => (
+                      {initialCourse.prerequisites.map((prereq: string, index: number) => (
                         <li key={index}>{prereq}</li>
                       ))}
                     </ul>
@@ -793,7 +779,7 @@ export function CourseClient({ initialCourse }: CourseClientProps) {
                   </CardHeader>
                   <CardContent>
                     <ul className="list-disc list-inside space-y-2 text-gray-300">
-                      {initialCourse.keyTakeaways.map((takeaway, index) => (
+                      {initialCourse.keyTakeaways.map((takeaway: string, index: number) => (
                         <li key={index}>{takeaway}</li>
                       ))}
                     </ul>

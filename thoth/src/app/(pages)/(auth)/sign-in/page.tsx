@@ -99,7 +99,7 @@ export default function SignInPage() {
                   </Label>
                   <Input
                     id="username"
-                    placeholder="educator_name"
+                    placeholder="username"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     required

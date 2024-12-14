@@ -133,7 +133,7 @@ export default function SignUpPage() {
                   <div className="relative">
                     <Input
                       id="username"
-                      placeholder="educator_username"
+                      placeholder="username"
                       value={username}
                       onChange={(e) => {
                         setUsername(e.target.value);

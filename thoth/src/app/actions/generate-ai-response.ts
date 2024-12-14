@@ -9,7 +9,7 @@ export async function generateAIResponse(
 ) {
   try {
     const groq = await initializeGroq();
-    console.log(groq);
+    //console.log(groq);
     if (!groq) {
       throw new Error('AI suggestions are not available - missing API key');
     }
