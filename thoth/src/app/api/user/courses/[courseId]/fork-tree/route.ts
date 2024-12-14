@@ -83,8 +83,7 @@ export async function GET(
         { status: 401 }
       );
     }
-
-    const courseId = (await params).courseId;
+    const courseId = params.courseId;
 
     // First, check if this course is a fork of another course
     const courseFork = await prisma.courseFork.findFirst({
