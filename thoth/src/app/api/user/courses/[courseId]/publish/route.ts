@@ -3,7 +3,7 @@ import prisma from '@/lib/prisma';
 
 export async function PATCH(
   req: Request,
-  { params }: { params: { courseId: string } }
+  { params }: { params: Promise<{ courseId: string }> }
 ) {
   try {
     const body = await req.json();

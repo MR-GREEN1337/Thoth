@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { courseId: string; moduleId: string } }
+  { params }: { params: Promise<{ courseId: string; moduleId: string }> }
 ) {
   try {
     const cookieStore = cookies();

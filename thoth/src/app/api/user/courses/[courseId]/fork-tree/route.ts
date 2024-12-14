@@ -71,7 +71,7 @@ async function buildForkTree(courseId: string, processedIds = new Set<string>())
 
 export async function GET(
   req: Request,
-  { params }: { params: { courseId: string } }
+  { params }: { params: Promise<{ courseId: string }> }
 ) {
   try {
     const cookieStore = await cookies();
@@ -83,7 +83,7 @@ export async function GET(
         { status: 401 }
       );
     }
-    const courseId = params.courseId;
+    const courseId = (await params).courseId;
 
     // First, check if this course is a fork of another course
     const courseFork = await prisma.courseFork.findFirst({

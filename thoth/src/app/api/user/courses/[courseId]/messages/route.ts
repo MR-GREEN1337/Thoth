@@ -5,7 +5,7 @@ import { generateAIResponse } from '@/app/actions/generate-ai-response';
 
 export async function GET(
   request: Request,
-  { params }: { params: { courseId: string } }
+  { params }: { params: Promise<{ courseId: string }> }
 ) {
   try {
     const cookieStore = cookies();
@@ -44,7 +44,7 @@ export async function GET(
 
 export async function POST(
   request: Request,
-  { params }: { params: { courseId: string } }
+  { params }: { params: Promise<{ courseId: string }> }
 ) {
   try {
     const cookieStore = cookies();
