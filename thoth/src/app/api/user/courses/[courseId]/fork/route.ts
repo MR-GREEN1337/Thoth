@@ -17,12 +17,12 @@ class APIError extends Error {
 
 export async function POST(
   req: Request,
-  { params }: { params: { courseId: string } }
+  { params }: { params: Promise<{ courseId: string }> }
 ) {
   try {
     const cookieStore = await cookies();
     const userId = cookieStore.get("token")?.value;
-    const { courseId } = params;
+    const { courseId } = await params;
 
     if (!userId) {
       throw new APIError("Unauthorized", 401, "UNAUTHORIZED");
