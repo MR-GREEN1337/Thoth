@@ -296,6 +296,7 @@ export function getReposByLanguage(language: SupportedLanguage) {
 export function getReposByTopic(topic: string) {
   return Object.values(FALLBACK_REPOS)
     .flat()
+    // @ts-ignore
     .filter(repo => repo.topics.includes(topic));
 }
 

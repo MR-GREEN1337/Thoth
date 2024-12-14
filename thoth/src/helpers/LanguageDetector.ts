@@ -396,6 +396,7 @@ export class LanguageDetector {
           reasoning: result.reasoning,
           suggestedFrameworks: result.suggestedFrameworks || languageInfo.frameworks,
           alternatives: result.alternatives || [],
+          //@ts-ignore
           metadata: {
             domains: languageInfo.domains,
             typicalTasks: languageInfo.typical_tasks,
@@ -416,8 +417,9 @@ export class LanguageDetector {
           language: fallbackLanguage,
           confidence: 0.6,
           reasoning: "Fallback detection based on keyword matching",
-          suggestedFrameworks: this.LANGUAGE_METADATA[fallbackLanguage].frameworks,
+          suggestedFrameworks: [...this.LANGUAGE_METADATA[fallbackLanguage].frameworks],
           alternatives: Object.keys(this.LANGUAGE_METADATA) as Array<keyof typeof this.LANGUAGE_METADATA>,
+          //@ts-ignore
           metadata: {
             domains: this.LANGUAGE_METADATA[fallbackLanguage].domains,
             typicalTasks: this.LANGUAGE_METADATA[fallbackLanguage].typical_tasks,
