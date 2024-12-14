@@ -10,6 +10,7 @@ import { WikipediaQueryRun } from "@langchain/community/tools/wikipedia_query_ru
 import { FALLBACK_REPOS, SupportedLanguage } from '@/lib/fallbackRepos';
 import { EnhancedGithubLoader } from '@/helpers/GithubRepoLoader';
 import { CodeContentGenerator, LanguageDetector } from "@/helpers/LanguageDetector";
+import { Prisma } from "@prisma/client";
 
 // Initialize API clients
 const groq = new Groq({
@@ -19,12 +20,12 @@ const groq = new Groq({
 const tavilyTool = new TavilySearchResults({ maxResults: 5 });
 const wikipediaTool = new WikipediaQueryRun();
 
-// Enhanced Schema Definitions with new fields for subject-specific content
+// Enhanced Schema Definitions with strict types
 const ModuleSchema = z.object({
-  title: z.string(),
-  content: z.string(),
-  duration: z.number(),
-  order: z.number(),
+  title: z.string().min(1, "Title is required"),
+  content: z.string().min(1, "Content is required"),
+  duration: z.number().positive("Duration must be positive"),
+  order: z.number().nonnegative("Order must be non-negative"),
   aiGenerated: z.boolean(),
   aiPrompt: z.string().optional(),
   searchResults: z.array(z.any()).optional(),
@@ -47,15 +48,16 @@ const ModuleSchema = z.object({
     solution: z.string().optional()
   })).optional()
 });
+
 const CourseSchema = z.object({
-  title: z.string(),
-  description: z.string(),
+  title: z.string().min(1, "Title is required"),
+  description: z.string().min(1, "Description is required"),
   status: z.enum(["DRAFT", "PUBLISHED", "ARCHIVED"]),
-  marketRelevance: z.number(),
-  trendAlignment: z.number(),
+  marketRelevance: z.number().min(0).max(1),
+  trendAlignment: z.number().min(0).max(1),
   keyTakeaways: z.array(z.string()),
   prerequisites: z.array(z.string()),
-  estimatedHours: z.number(),
+  estimatedHours: z.number().positive(),
   modules: z.array(ModuleSchema),
   searchResults: z.array(z.any()).optional(),
   marketResearch: z.any().optional(),
@@ -856,8 +858,8 @@ PLEASE RETURN ONLY A JSON, NOTHING ELSE, NO EXPLANATORY TEXT, JUST THE PLAIN JSO
                   module.title,
                   languageAnalysis.language as SupportedLanguage,
                   {
-                    difficulty: state.analysis?.expertiseLevel === 'BEGINNER' ? 'BEGINNER' : 
-                               state.analysis?.expertiseLevel === 'ADVANCED' ? 'ADVANCED' : 'INTERMEDIATE',
+                    difficulty: (state.analysis as any)?.expertiseLevel === 'BEGINNER' ? 'BEGINNER' : 
+                               (state.analysis as any)?.expertiseLevel === 'ADVANCED' ? 'ADVANCED' : 'INTERMEDIATE',
                     contentType: "TUTORIAL",
                     includeTests: true,
                     topics: searchResults.map(result => result.title.toLowerCase().split(' ')).flat()
@@ -898,7 +900,7 @@ PLEASE RETURN ONLY A JSON, NOTHING ELSE, NO EXPLANATORY TEXT, JUST THE PLAIN JSO
               Title: "${module.title}"
               Duration: ${module.duration} minutes
               Content Type: ${contentType.primaryContentType}
-              Primary Audience Level: ${state.analysis?.expertiseLevel || 'BEGINNER'}
+              Primary Audience Level: ${(state.analysis as any)?.expertiseLevel || 'BEGINNER'}
               
               Include:
               1. Clear learning objectives
@@ -1524,33 +1526,92 @@ const AgentState = Annotation.Root({
   }),
 });
 
+// Type the request schema
 const RequestSchema = z.object({
   analysis: z.any(),
   courseIdea: z.string().optional()
 });
 
+type RequestData = z.infer<typeof RequestSchema>;
+
+// Utility function for safe JSON parsing
+const safeJsonParse = <T>(text: string, context: string = ''): T | null => {
+  try {
+    if (!text) return null;
+    const parsed = JSON.parse(text);
+    return parsed as T;
+  } catch (error) {
+    console.error(`JSON parsing failed (${context}):`, error);
+    return null;
+  }
+};
+
+// Utility function for safe async operations
+const withRetry = async <T>(
+  operation: () => Promise<T>,
+  retries: number = 3,
+  delay: number = 1000
+): Promise<T> => {
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error as Error;
+      if (attempt < retries - 1) {
+        await new Promise(resolve => setTimeout(resolve, delay * (attempt + 1)));
+      }
+    }
+  }
+
+  throw lastError;
+};
+class CourseGenerationError extends Error {
+  constructor(
+    message: string,
+    public status: number = 500,
+    public code: string = 'UNKNOWN_ERROR',
+    public details?: unknown
+  ) {
+    super(message);
+    this.name = 'CourseGenerationError';
+  }
+}
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    // Validate request
+    const body = await req.json().catch(() => {
+      throw new CourseGenerationError("Invalid JSON in request body", 400, "INVALID_JSON");
+    });
+
+    // Get user token
     const cookieStore = await cookies();
     const userId = cookieStore.get("token")?.value;
 
-    if (!body.analysis || !userId) {
-      return NextResponse.json(
-        { error: "Missing required parameters" },
-        { status: 400 }
+    if (!userId) {
+      throw new CourseGenerationError("Unauthorized", 401, "UNAUTHORIZED");
+    }
+
+    // Validate request data
+    const validationResult = RequestSchema.safeParse(body);
+    if (!validationResult.success) {
+      throw new CourseGenerationError(
+        "Invalid request data",
+        400,
+        "VALIDATION_ERROR",
+        validationResult.error.errors
       );
     }
 
-    console.log(body)
+    const { analysis, courseIdea } = validationResult.data;
 
-    const { analysis, courseIdea } = RequestSchema.parse(body);
-
+    // Initialize state
     let state: typeof AgentState.State = {
       messages: [],
       userId,
       analysis,
-      courseIdea: courseIdea || "", // Add course idea to initial state
+      courseIdea: courseIdea || "",
       marketResearch: null,
       courseStructure: null,
       courseContent: null,
@@ -1559,167 +1620,188 @@ export async function POST(req: Request) {
       retryCount: 0,
     };
 
+    // Main course generation loop with error handling
     const maxSteps = 10;
     let steps = 0;
 
-    while (
-      state.next !== "FINISH" &&
-      state.next !== "ERROR" &&
-      steps < maxSteps
-    ) {
+    while (state.next !== "FINISH" && state.next !== "ERROR" && steps < maxSteps) {
       console.log(`Step ${steps + 1}: ${state.next}`);
 
-      switch (state.next) {
-        case "MARKET_RESEARCH":
-          state = {
-            ...state,
-            ...(await IntelligentCourseAgent.marketResearch(state)),
-          };
-          break;
-        case "STRUCTURE":
-          state = {
-            ...state,
-            ...(await IntelligentCourseAgent.createStructure(state)),
-          };
-          break;
-        case "CONTENT":
-          state = {
-            ...state,
-            ...(await IntelligentCourseAgent.generateContent(state)),
-          };
-          break;
-        case "QUALITY_CHECK":
-          state = {
-            ...state,
-            ...(await IntelligentCourseAgent.qualityCheck(state)),
-          };
-          break;
-        case "REFINE_CONTENT":
-          state = {
-            ...state,
-            ...(await IntelligentCourseAgent.refineContent(state)),
-          };
-          break;
-        case "FINISH":
-          // Exit the loop when we're done
-          break;
-        case "ERROR":
-          throw new Error(
-            (state.messages[state.messages.length - 1]?.content as string) ||
-              "Unknown error"
+      try {
+        state = await withRetry(async () => {
+          switch (state.next) {
+            case "MARKET_RESEARCH":
+              return {
+                ...state,
+                ...(await IntelligentCourseAgent.marketResearch(state)),
+              };
+            case "STRUCTURE":
+              return {
+                ...state,
+                ...(await IntelligentCourseAgent.createStructure(state)),
+              };
+            case "CONTENT":
+              return {
+                ...state,
+                ...(await IntelligentCourseAgent.generateContent(state)),
+              };
+            case "QUALITY_CHECK":
+              return {
+                ...state,
+                ...(await IntelligentCourseAgent.qualityCheck(state)),
+              };
+            case "REFINE_CONTENT":
+              return {
+                ...state,
+                ...(await IntelligentCourseAgent.refineContent(state)),
+              };
+            default:
+              return state;
+          }
+        });
+
+        if (state.next !== "FINISH") {
+          const nextState = await IntelligentCourseAgent.supervise(state);
+          state = { ...state, ...nextState };
+        }
+        
+      } catch (error) {
+        console.error(`Error in step ${state.next}:`, error);
+        
+        if (state.retryCount >= 3) {
+          throw new CourseGenerationError(
+            `Failed after 3 retries at step: ${state.next}`,
+            500,
+            "MAX_RETRIES_EXCEEDED"
           );
+        }
+        
+        state = {
+          ...state,
+          retryCount: state.retryCount + 1,
+          messages: [...state.messages, new HumanMessage(`Error in ${state.next}: ${error}`)]
+        };
       }
 
-      // Only call supervise if we're not in FINISH state
-      if (state.next !== "FINISH") {
-        const nextState = await IntelligentCourseAgent.supervise(state);
-        state = { ...state, ...nextState };
-      }
       steps++;
     }
 
-    // Check for max steps reached
+    // Handle completion
     if (steps >= maxSteps) {
-      console.warn("Max steps reached, forcing completion");
-      state.next = "FINISH";
+      throw new CourseGenerationError(
+        "Max steps reached without completion",
+        500,
+        "MAX_STEPS_EXCEEDED"
+      );
     }
 
-    // Handle invalid state
-    if (!state.courseContent && state.next === "FINISH") {
-      throw new Error("Failed to generate course content");
+    if (!state.courseContent) {
+      throw new CourseGenerationError(
+        "Failed to generate course content",
+        500,
+        "CONTENT_GENERATION_FAILED"
+      );
     }
 
-    const marketInsight = await prisma.marketInsight.create({
-      data: {
-        type: "TREND",
-        content: JSON.stringify(state.marketResearch),
-        userId: userId,
-        marketTrend: {
-          connect:
-            state.marketResearch.trends?.map((trend: any) => ({
+    // Create course in database with transaction
+    const [marketInsight, course] = await prisma.$transaction(async (tx) => {
+      const insight = await tx.marketInsight.create({
+        data: {
+          type: "TREND",
+          content: JSON.stringify(state.marketResearch),
+          userId: userId,
+          marketTrend: {
+            connect: state.marketResearch.trends?.map((trend: any) => ({
               id: trend.id,
             })) || [],
+          },
         },
-      },
-    });
-    // Create course in database with all metadata
-    const course = await prisma.course.create({
-      data: {
-        title: state.courseContent.title,
-        description: state.courseContent.description,
-        status: "DRAFT" as const,
-        marketRelevance: state.courseContent.marketRelevance,
-        trendAlignment: state.courseContent.trendAlignment,
-        keyTakeaways: state.courseContent.keyTakeaways,
-        prerequisites: state.courseContent.prerequisites,
-        estimatedHours: state.courseContent.estimatedHours,
-        authorId: userId,
+      });
 
-        // Create modules with enhanced metadata
-        modules: {
-          create: state.courseContent.modules.map((module: any) => ({
-            title: module.title,
-            content: module.content,
-            order: module.order,
-            duration: module.duration,
-            aiGenerated: module.aiGenerated,
-            aiPrompt: module.aiPrompt,
-            interactiveElements: module.interactiveElements // Store interactive elements
-          })),
+      const newCourse = await tx.course.create({
+        //@ts-ignore
+        data: {
+          title: state.courseContent.title,
+          description: state.courseContent.description,
+          status: "DRAFT",
+          marketRelevance: state.courseContent.marketRelevance,
+          trendAlignment: state.courseContent.trendAlignment,
+          keyTakeaways: state.courseContent.keyTakeaways,
+          prerequisites: state.courseContent.prerequisites,
+          estimatedHours: state.courseContent.estimatedHours,
+          authorId: userId,
+          modules: {
+            create: state.courseContent.modules.map((module: any) => ({
+              title: module.title,
+              content: module.content,
+              order: module.order,
+              duration: module.duration,
+              aiGenerated: module.aiGenerated,
+              aiPrompt: module.aiPrompt,
+              interactiveElements: module.interactiveElements
+            })),
+          },
+          marketTrend: state.marketResearch.primaryTrendId
+            ? {
+                connect: {
+                  id: state.marketResearch.primaryTrendId,
+                },
+              }
+            : undefined,
+          interests: state.marketResearch.relevantInterests?.length
+            ? {
+                connect: state.marketResearch.relevantInterests.map(
+                  (id: string) => ({ id })
+                ),
+              }
+            : undefined,
         },
+        include: {
+          modules: true,
+          interests: true,
+          marketTrend: true,
+        },
+      });
 
-        // Link to relevant market trends if available
-        marketTrend: state.marketResearch.primaryTrendId
-          ? {
-              connect: {
-                id: state.marketResearch.primaryTrendId,
-              },
-            }
-          : undefined,
-
-        // Link to user interests if available
-        interests: state.marketResearch.relevantInterests?.length
-          ? {
-              connect: state.marketResearch.relevantInterests.map(
-                (id: string) => ({ id })
-              ),
-            }
-          : undefined,
-      },
-      include: {
-        modules: true,
-        interests: true,
-        marketTrend: true,
-      },
+      return [insight, newCourse];
     });
-    // Log Interactive Elements
-    for (const module of state.courseContent.modules) {
-    console.log("Interactive Elements:", module.interactiveElements);
-    }
-    // Format and return the final response
-    const response = {
+
+    return NextResponse.json({
       course,
       marketInsight,
       qualityMetrics: state.qualityAnalysis,
       marketResearch: state.marketResearch,
       generationMetadata: {
-        steps: steps,
+        steps,
         refinements: state.retryCount,
         qualityScore: state.qualityAnalysis?.averageScore,
         marketAlignment: state.marketResearch?.alignmentScore,
         generationTime: new Date().toISOString(),
       },
-    };
+    });
 
-    return NextResponse.json(response);
   } catch (error) {
     console.error("Course generation failed:", error);
-    return NextResponse.json(
-      {
-        error: "Failed to generate course",
-        details: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+
+    if (error instanceof CourseGenerationError) {
+      return NextResponse.json({
+        error: error.message,
+        code: error.code,
+        details: error.details
+      }, { status: error.status });
+    }
+
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      return NextResponse.json({
+        error: "Database error",
+        code: error.code,
+        details: error.message
+      }, { status: 500 });
+    }
+
+    return NextResponse.json({
+      error: "Internal server error",
+      details: error instanceof Error ? error.message : "Unknown error"
+    }, { status: 500 });
   }
 }
