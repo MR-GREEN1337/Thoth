@@ -281,7 +281,7 @@ export async function clearUserPreferences(userId: string): Promise<void> {
         data: {
           rawPreferences: null,
           preferenceAnalysis: Prisma.JsonNull,
-          expertiseLevel: null,
+          expertiseLevel: undefined,
           weeklyHours: 0,
         },
       });
