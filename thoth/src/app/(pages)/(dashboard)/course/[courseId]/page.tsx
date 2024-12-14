@@ -118,16 +118,16 @@ async function getCourse(courseId: string): Promise<Course | null> {
   }
 }
 
-type PageParams = {
+type PageParams = Promise<{
   courseId: string;
-};
+}>;
 
 interface PageProps {
   params: PageParams;
 }
 
 export default async function CoursePage({ params }: PageProps) {
-  const course = await getCourse(params.courseId);
+  const course = await getCourse((await params).courseId);
 
   if (!course) {
     redirect("/courses"); // Redirect to courses page if course not found
@@ -138,7 +138,7 @@ export default async function CoursePage({ params }: PageProps) {
 
 // Add metadata generation if needed
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-  const course = await getCourse(params.courseId);
+  const course = await getCourse((await params).courseId);
   
   if (!course) {
     return {
