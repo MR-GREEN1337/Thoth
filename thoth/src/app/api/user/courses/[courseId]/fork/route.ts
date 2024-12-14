@@ -1,21 +1,35 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
+
+// Custom error class for better error handling
+class APIError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public code: string
+  ) {
+    super(message);
+    this.name = 'APIError';
+  }
+}
 
 export async function POST(
   req: Request,
-  { params }: { params: Promise<{ courseId: string }> }
+  { params }: { params: { courseId: string } }
 ) {
   try {
     const cookieStore = await cookies();
     const userId = cookieStore.get("token")?.value;
-    const courseId = (await params).courseId;
+    const { courseId } = params;
 
     if (!userId) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
+      throw new APIError("Unauthorized", 401, "UNAUTHORIZED");
+    }
+
+    if (!courseId) {
+      throw new APIError("Course ID is required", 400, "MISSING_COURSE_ID");
     }
 
     // Get the original course with all necessary relations
@@ -32,10 +46,7 @@ export async function POST(
     });
 
     if (!originalCourse) {
-      return NextResponse.json(
-        { error: "Course not found" },
-        { status: 404 }
-      );
+      throw new APIError("Course not found", 404, "COURSE_NOT_FOUND");
     }
 
     // Check if user already has a fork of this course
@@ -51,55 +62,55 @@ export async function POST(
     });
 
     if (existingFork) {
-      return NextResponse.json(
-        { error: "You already have a fork of this course" },
-        { status: 400 }
+      throw new APIError(
+        "You already have a fork of this course",
+        400,
+        "DUPLICATE_FORK"
       );
     }
 
+    // Prepare create input with proper type handling
+    const createInput: Prisma.CourseCreateInput = {
+      title: `${originalCourse.title} (Fork)`,
+      description: originalCourse.description,
+      status: "DRAFT",
+      marketRelevance: originalCourse.marketRelevance,
+      trendAlignment: originalCourse.trendAlignment,
+      keyTakeaways: originalCourse.keyTakeaways,
+      prerequisites: originalCourse.prerequisites,
+      estimatedHours: originalCourse.estimatedHours,
+      author: {
+        connect: { id: userId }
+      },
+      modules: {
+        create: originalCourse.modules.map((module) => ({
+          title: module.title,
+          content: module.content,
+          order: module.order,
+          duration: module.duration,
+          aiGenerated: module.aiGenerated,
+          aiPrompt: module.aiPrompt,
+        })),
+      },
+      interests: {
+        connect: originalCourse.interests.map((interest) => ({
+          id: interest.id,
+        })),
+      },
+      ...(originalCourse.marketTrend && {
+        marketTrend: {
+          connect: {
+            id: originalCourse.marketTrend.id
+          }
+        }
+      })
+    };
+
     // Use a transaction to ensure all operations complete together
     const result = await prisma.$transaction(async (tx) => {
-      // Create new course as a fork
+      // Create new course as a fork with type-safe input
       const forkedCourse = await tx.course.create({
-        data: {
-          title: `${originalCourse.title} (Fork)`,
-          description: originalCourse.description,
-          status: "DRAFT" as const,
-          marketRelevance: originalCourse.marketRelevance,
-          trendAlignment: originalCourse.trendAlignment,
-          keyTakeaways: originalCourse.keyTakeaways,
-          prerequisites: originalCourse.prerequisites,
-          estimatedHours: originalCourse.estimatedHours,
-          authorId: userId,
-
-          // Recreate modules
-          modules: {
-            create: originalCourse.modules.map((module) => ({
-              title: module.title,
-              content: module.content,
-              order: module.order,
-              duration: module.duration,
-              aiGenerated: module.aiGenerated,
-              aiPrompt: module.aiPrompt,
-            })),
-          },
-
-          // Connect same interests
-          interests: {
-            connect: originalCourse.interests.map((interest) => ({
-              id: interest.id,
-            })),
-          },
-
-          // Connect same market trend if exists
-          marketTrend: originalCourse.marketTrend 
-            ? {
-                connect: {
-                  id: originalCourse.marketTrend.id
-                }
-              }
-            : undefined,
-        },
+        data: createInput,
       });
 
       // Create fork relationship record
@@ -112,7 +123,7 @@ export async function POST(
       });
 
       // Return complete forked course with relations
-      const completeFork = await tx.course.findUnique({
+      const completeFork = await tx.course.findUniqueOrThrow({
         where: { id: forkedCourse.id },
         include: {
           modules: {
@@ -140,7 +151,7 @@ export async function POST(
       const updatedOriginalCourse = await tx.course.update({
         where: { id: courseId },
         data: {
-          // Any additional stats you want to update can go here
+          // Any additional stats updates can go here
         },
         include: {
           _count: {
@@ -155,13 +166,32 @@ export async function POST(
         forkedCourse: completeFork,
         originalCourseForkCount: updatedOriginalCourse._count.forks
       };
+    }, {
+      maxWait: 5000, // 5 seconds
+      timeout: 10000 // 10 seconds
     });
 
     return NextResponse.json(result);
+
   } catch (error) {
     console.error("Failed to fork course:", error);
+
+    if (error instanceof APIError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.status }
+      );
+    }
+
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      return NextResponse.json(
+        { error: "Database error", code: error.code },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json(
-      { error: "Failed to fork course" },
+      { error: "Internal server error", code: "INTERNAL_ERROR" },
       { status: 500 }
     );
   }
