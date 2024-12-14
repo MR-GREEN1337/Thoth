@@ -80,10 +80,6 @@ const LoadingSpinner = () => (
     };
   }, [isOpen]);
 
-  const averageProgress = profileData?.enrollments?.reduce(
-    (acc, curr) => acc + curr.progress, 0
-  ) / (profileData?.enrollments?.length || 1);
-
   return (
     <div 
       id="profile-dropdown"
