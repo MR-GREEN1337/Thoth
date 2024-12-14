@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { CSSProperties, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Loader2,
@@ -26,7 +26,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { dracula } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { nightOwl } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
@@ -182,23 +182,28 @@ const useCourseActions = (courseId: string, initialStatus: Course['status']) => 
   };
 };
 
-// Markdown components factory
 const createMarkdownComponents = (canEdit: boolean) => {
   const components: Record<string, React.FC<MarkdownComponentProps>> = {
     code: ({ inline, className, children, ...props }: CodeProps) => {
       const match = /language-(\w+)/.exec(className || "");
-      return !inline && match ? (
-        <div className="my-4">
-          <SyntaxHighlighter
-            style={dracula}
-            language={match[1]}
-            PreTag="div"
-            {...props}
-          >
-            {String(children).replace(/\n$/, "")}
-          </SyntaxHighlighter>
-        </div>
-      ) : (
+      
+      if (!inline && match) {
+        return (
+          <div className="my-4">
+            <SyntaxHighlighter
+              // @ts-ignore
+              style={nightOwl}
+              language={match[1]}
+              PreTag="div"
+              {...props}
+            >
+              {String(children).replace(/\n$/, "")}
+            </SyntaxHighlighter>
+          </div>
+        );
+      }
+
+      return (
         <code
           className="bg-gray-800/50 px-1.5 py-0.5 rounded text-gray-200"
           {...props}
@@ -207,7 +212,6 @@ const createMarkdownComponents = (canEdit: boolean) => {
         </code>
       );
     },
-
     // Math components
     math: ({ children }) => (
       <div className="my-4 p-4 bg-gray-800/50 rounded overflow-x-auto">
