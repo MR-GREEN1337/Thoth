@@ -1,16 +1,6 @@
 export const FALLBACK_REPOS = {
   javascript: [
     {
-      url: "https://github.com/PacktPublishing/JavaScript-from-Frontend-to-Backend",
-      name: "JavaScript-from-Frontend-to-Backend",
-      description: "Complete JavaScript guide covering both client and server-side development",
-      language: "javascript",
-      stars: 1200,
-      topics: ["frontend", "backend", "fullstack"],
-      frameworks: ["React", "Node.js", "Express"],
-      lastUpdate: "2024-03-15"
-    },
-    {
       url: "https://github.com/PacktPublishing/Next.js-Web-Development",
       name: "Next.js-Web-Development",
       description: "Building modern web applications with Next.js and React",
@@ -29,29 +19,9 @@ export const FALLBACK_REPOS = {
       topics: ["nextjs", "production", "advanced"],
       frameworks: ["Next.js"],
       lastUpdate: "2024-01-10"
-    },
-    {
-      url: "https://github.com/PacktPublishing/Vue.js-3-Cookbook",
-      name: "Vue.js-3-Cookbook",
-      description: "Practical recipes for building Vue.js 3 applications",
-      language: "javascript",
-      stars: 950,
-      topics: ["vuejs", "frontend", "spa"],
-      frameworks: ["Vue.js"],
-      lastUpdate: "2024-03-01"
     }
   ],
   typescript: [
-    {
-      url: "https://github.com/PacktPublishing/Essential-TypeScript-4",
-      name: "Essential-TypeScript-4",
-      description: "TypeScript 4 examples and practical projects",
-      language: "typescript",
-      stars: 780,
-      topics: ["typescript", "basics", "fundamentals"],
-      frameworks: ["Node.js"],
-      lastUpdate: "2024-02-15"
-    },
     {
       url: "https://github.com/PacktPublishing/TypeScript-4-Design-Patterns-and-Best-Practices",
       name: "TypeScript-4-Design-Patterns",
@@ -62,31 +32,11 @@ export const FALLBACK_REPOS = {
       frameworks: ["Express", "Node.js"],
       lastUpdate: "2024-01-25"
     },
-    {
-      url: "https://github.com/PacktPublishing/Advanced-TypeScript-Programming-Projects",
-      name: "Advanced-TypeScript-Projects",
-      description: "Real-world TypeScript projects and advanced concepts",
-      language: "typescript",
-      stars: 670,
-      topics: ["advanced", "projects", "real-world"],
-      frameworks: ["NestJS", "TypeORM"],
-      lastUpdate: "2024-03-10"
-    },
-    {
-      url: "https://github.com/PacktPublishing/Full-Stack-TypeScript-Development",
-      name: "Full-Stack-TypeScript-Development",
-      description: "End-to-end TypeScript development with modern frameworks",
-      language: "typescript",
-      stars: 850,
-      topics: ["fullstack", "modern", "web-development"],
-      frameworks: ["Next.js", "tRPC", "Prisma"],
-      lastUpdate: "2024-03-20"
-    }
   ],
   python: [
     {
-      url: "https://github.com/PacktPublishing/Python-for-Algorithmic-Trading",
-      name: "Python-for-Algorithmic-Trading",
+      url: "https://github.com/PacktPublishing/Machine-Learning-for-Algorithmic-Trading-Second-Edition",
+      name: "Machine-Learning-for-Algorithmic-Trading-Second-Edition",
       description: "Python applications in financial markets and trading",
       language: "python",
       stars: 1500,
@@ -113,16 +63,6 @@ export const FALLBACK_REPOS = {
       topics: ["api", "fastapi", "backend"],
       frameworks: ["FastAPI"],
       lastUpdate: "2024-03-05"
-    },
-    {
-      url: "https://github.com/PacktPublishing/Machine-Learning-with-PyTorch",
-      name: "Machine-Learning-with-PyTorch",
-      description: "Practical machine learning projects using PyTorch",
-      language: "python",
-      stars: 1200,
-      topics: ["machine-learning", "pytorch", "ai"],
-      frameworks: ["PyTorch", "scikit-learn"],
-      lastUpdate: "2024-03-18"
     }
   ],
   java: [

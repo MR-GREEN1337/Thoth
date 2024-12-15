@@ -130,7 +130,7 @@ export default async function CoursePage({ params }: PageProps) {
   const course = await getCourse((await params).courseId);
 
   if (!course) {
-    redirect("/courses"); // Redirect to courses page if course not found
+    redirect("/dashboard"); // Redirect to courses page if course not found
   }
 
   return <CourseClient initialCourse={course as any} />;

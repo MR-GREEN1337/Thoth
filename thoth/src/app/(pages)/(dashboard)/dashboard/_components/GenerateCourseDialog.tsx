@@ -1,4 +1,6 @@
-import { useState } from 'react';
+"use client";
+
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, Sparkles, BookOpen, Share2, Users, GitFork } from 'lucide-react';
 import {
@@ -31,6 +33,8 @@ const GenerateCourseDialog = ({
   const [isGenerating, setIsGenerating] = useState(false);
   const [courseIdea, setCourseIdea] = useState('');
   const [inputError, setInputError] = useState('');
+  const [countdown, setCountdown] = useState(25);
+  const [showCountdown, setShowCountdown] = useState(false);
 
   const steps = [
     'Analyzing course idea',
@@ -38,6 +42,14 @@ const GenerateCourseDialog = ({
     'Creating content modules',
     'Finalizing course materials'
   ];
+
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (showCountdown && countdown > 0) {
+      timer = setTimeout(() => setCountdown(prev => prev - 1), 1000);
+    }
+    return () => clearTimeout(timer);
+  }, [countdown, showCountdown]);
 
   const handleGenerate = async () => {
     if (!preferences?.preferenceAnalysis) {
@@ -59,6 +71,9 @@ const GenerateCourseDialog = ({
         setGenerationStep(i);
         await new Promise(resolve => setTimeout(resolve, 1500));
       }
+      
+      setShowCountdown(true);
+      await new Promise(resolve => setTimeout(resolve, 25000));
 
       const response = await fetch('/api/user/generate-courses', {
         method: 'POST',
@@ -75,15 +90,64 @@ const GenerateCourseDialog = ({
       onCourseGenerated(course);
       toast.success('Course generated successfully!');
       setIsOpen(false);
-      setCourseIdea(''); // Reset input after successful generation
+      setCourseIdea('');
     } catch (error) {
       console.error('Error generating course:', error);
       toast.error('Failed to generate course');
     } finally {
       setIsGenerating(false);
       setGenerationStep(0);
+      setShowCountdown(false);
+      setCountdown(25);
     }
   };
+
+  const CountdownDisplay = () => (
+    <motion.div
+      className="relative w-32 h-32 mx-auto"
+      initial={{ scale: 0 }}
+      animate={{ scale: 1 }}
+      exit={{ scale: 0 }}
+    >
+      <motion.div
+        className="absolute inset-0 rounded-full border-4 border-blue-500"
+        style={{
+          borderRadius: '50%',
+          borderColor: `hsl(${countdown * 8}, 70%, 50%)`,
+        }}
+        animate={{
+          rotate: 360,
+          scale: [1, 1.1, 1],
+        }}
+        transition={{
+          duration: 2,
+          repeat: Infinity,
+          ease: "easeInOut"
+        }}
+      />
+      <motion.div
+        className="absolute inset-0 flex items-center justify-center"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+      >
+        <span className="text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-600">
+          {countdown}
+        </span>
+      </motion.div>
+      <motion.div
+        className="absolute inset-0 rounded-full border-2 border-blue-300/20"
+        animate={{
+          scale: [1, 1.2, 1],
+          opacity: [0.5, 0.8, 0.5],
+        }}
+        transition={{
+          duration: 3,
+          repeat: Infinity,
+          ease: "easeInOut"
+        }}
+      />
+    </motion.div>
+  );
 
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
@@ -161,22 +225,42 @@ const GenerateCourseDialog = ({
             </div>
           ) : (
             <motion.div 
-              className="space-y-4"
+              className="space-y-8"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
             >
-              <Progress value={(generationStep + 1) * 25} className="h-2" />
-              <AnimatePresence mode="wait">
+              {!showCountdown ? (
+                <>
+                  <Progress value={(generationStep + 1) * 50} className="h-2" />
+                  <AnimatePresence mode="wait">
+                    <motion.div
+                      key={generationStep}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -20 }}
+                      className="text-center text-gray-300"
+                    >
+                      {steps[generationStep]}
+                    </motion.div>
+                  </AnimatePresence>
+                </>
+              ) : (
                 <motion.div
-                  key={generationStep}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -20 }}
-                  className="text-center text-gray-300"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="space-y-4"
                 >
-                  {steps[generationStep]}
+                  <CountdownDisplay />
+                  <motion.p
+                    className="text-center text-gray-400"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.5 }}
+                  >
+                    Crafting your personalized learning experience...
+                  </motion.p>
                 </motion.div>
-              </AnimatePresence>
+              )}
             </motion.div>
           )}
         </div>

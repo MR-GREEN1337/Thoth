@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "populate-db-atlas"
+version = "0.1.0"
+description = ""
+authors = ["mr-green1337 <islam.hachimi2003@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+boto3 = "^1.35.51"
+pymongo = "^4.10.1"
+python-dotenv = "^1.0.1"
+aiohttp = "^3.11.10"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

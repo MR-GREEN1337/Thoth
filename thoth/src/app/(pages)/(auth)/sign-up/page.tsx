@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Loader2, Sparkles, ArrowLeft, AlertCircle, Book } from "lucide-react";
+import { Loader2, Book, ArrowLeft, AlertCircle } from "lucide-react";
 import Link from "next/link";
 import {
   Card,
@@ -13,15 +13,19 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert";
 import debounce from "lodash/debounce";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Textarea } from "@/components/ui/textarea";
 import { IntertwiningArcs } from "@/components/auth/IntertwiningArcs";
 import Logo from "@/components/global/logo";
-import { checkUsername, signUp, signUpAction } from "@/app/actions/auth";
+import { checkUsername, signUpAction } from "@/app/actions/auth";
 import Cookies from "js-cookie";
 
 export default function SignUpPage() {
@@ -77,9 +81,7 @@ export default function SignUpPage() {
       formData.append("rawPreferences", preferences);
 
       const userResult = await signUpAction(formData);
-      // Set userId as cookie token
       Cookies.set("token", userResult.userId);
-      // Redirect to dashboard
       router.push("/onboarding");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to sign up");
@@ -112,11 +114,17 @@ export default function SignUpPage() {
               <a href="/">
                 <Logo className="mb-4" variant="auth" />
               </a>
+              <Alert className="mb-4 bg-blue-900/20 border-blue-800">
+                <AlertTitle className="text-blue-400">👋 Hello There!</AlertTitle>
+                <AlertDescription className="text-gray-300">
+                  This is a demo implementation with basic user management. Authentication is simplified for hackathon purposes. Please use any test credentials to explore the app.
+                </AlertDescription>
+              </Alert>
               <CardTitle className="text-2xl md:text-3xl text-white">
-                Join Thoth
+                Join Thoth (Demo)
               </CardTitle>
               <CardDescription className="text-gray-400">
-                Be part of the future of AI-powered education
+                Create a test account to explore our hackathon project
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -195,7 +203,7 @@ export default function SignUpPage() {
                   ) : (
                     <>
                       <Book className="mr-2 h-4 w-4" />
-                      Start Your Journey
+                      Create Test Account
                     </>
                   )}
                 </Button>
@@ -208,7 +216,7 @@ export default function SignUpPage() {
                   href="/sign-in"
                   className="text-blue-400 hover:text-blue-300"
                 >
-                  Return to your courses
+                  Sign in here
                 </Link>
               </p>
             </CardFooter>
@@ -234,20 +242,20 @@ export default function SignUpPage() {
                 transition={{ delay: 0.4 }}
               >
                 <h2 className="text-xl md:text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-                  Democratize Knowledge
+                  Hackathon Demo Features
                 </h2>
                 <p className="text-gray-400 mt-2 text-sm md:text-base">
-                  Create courses that evolve with AI and community insights
+                  Explore our core functionality with simplified auth
                 </p>
               </motion.div>
 
               {[
-                "AI-Powered Course Generation",
-                "Real-time Market Alignment",
-                "Git-inspired Knowledge Evolution",
-                "Specialized Content Creation",
-                "Community-Driven Improvement",
-                "Dynamic Learning Paths",
+                "Basic User Management",
+                "Course Creation Interface",
+                "AI-Powered Content Generation",
+                "Learning Path Visualization",
+                "Community Features Demo",
+                "Knowledge Graph Preview",
               ].map((feature, index) => (
                 <motion.div
                   key={feature}

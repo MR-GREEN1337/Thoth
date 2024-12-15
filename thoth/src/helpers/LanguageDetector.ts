@@ -1,260 +1,203 @@
 import { initializeGroq } from "@/app/actions/generate-suggestion";
-import { getReposByLanguage, getReposByTopic, SupportedLanguage } from "@/lib/fallbackRepos";
-import { EnhancedGithubLoader } from "./GithubRepoLoader";
+import { SupportedLanguage } from "@/lib/fallbackRepos";
+import { MongoDBAtlasVectorSearch } from "@langchain/mongodb";
+import { OpenAIEmbeddings } from "@langchain/openai";
+import { Groq } from "groq-sdk";
+
+const CONFIG = {
+  openai: {
+    apiKey: process.env.OPENAI_API_KEY,
+    model: "text-embedding-3-small"
+  },
+  mongodb: {
+    uri: process.env.MONGODB_ATLAS_URI,
+    dbName: process.env.MONGODB_ATLAS_DB_NAME,
+    collectionName: process.env.MONGODB_ATLAS_COLLECTION_NAME,
+    indexName: "code_vector_index",
+    textKey: "content",
+    embeddingKey: "embedding"
+  }
+};
+
+  interface CodePattern {
+  pattern: string;
+  context: string;
+  applicability: string[];
+  complexity: 'basic' | 'intermediate' | 'advanced';
+  bestPractices: string[];
+}
+
+interface CodeExample {
+  code: string;
+  explanation: string;
+  concepts: string[];
+  learningPoints: string[];
+  commonMistakes: string[];
+  testCases?: string[];
+}
+
+interface LearningObjective {
+  concept: string;
+  difficulty: 'beginner' | 'intermediate' | 'advanced';
+  prerequisites: string[];
+  outcomes: string[];
+}
+
+const TOKEN_LIMITS = {
+  SEARCH_RESULTS: 1000,
+  CODE_OUTPUT: 2000,
+  EXAMPLE_LENGTH: 300
+};
 
 export class CodeContentGenerator {
-    private static readonly DIFFICULTY_LEVELS = {
-      BEGINNER: "beginner",
-      INTERMEDIATE: "intermediate",
-      ADVANCED: "advanced"
-    } as const;
-  
-    private static readonly CONTENT_TYPES = {
-      TUTORIAL: "tutorial",
-      REFERENCE: "reference",
-      PROJECT: "project",
-      EXERCISE: "exercise"
-    } as const;
-  
-    private static async extractRelevantCode(content: any[], topic: string) {
-        const prompt = {
-          role: "system",
-          content: "Analyze repository code and extract relevant patterns and examples.",
-          functions: [
-            {
-              name: "extract_patterns",
-              description: "Extracts relevant code patterns and examples",
-              parameters: {
-                type: "object",
-                properties: {
-                  relevantSnippets: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        code: { type: "string" },
-                        purpose: { type: "string" },
-                        patterns: { type: "array", items: { type: "string" } }
-                      }
-                    }
-                  },
-                  usefulPatterns: {
-                    type: "array",
-                    items: { type: "string" }
-                  }
-                }
-              }
-            }
-          ]
-        };
-    
-        const groq = await initializeGroq();
-        const completion = await groq?.chat.completions.create({
-          messages: [
-            { role: "system", content: prompt.content },
-            { 
-              role: "user", 
-              content: `Extract relevant code patterns for topic: ${topic}\n\nCode:\n${JSON.stringify(content)}`
-            }
-          ],
-          model: "llama-3.2-90b-vision-preview",
-          temperature: 0.3,
-          functions: prompt.functions,
-          function_call: { name: "extract_patterns" }
-        });
-    
-        return JSON.parse(completion?.choices[0]?.message?.function_call?.arguments || "{}");
-      }
-    
-      static async generateLanguageSpecificCode(
-        topic: string,
-        language: SupportedLanguage,
-        options: {
-          difficulty?: keyof typeof CodeContentGenerator.DIFFICULTY_LEVELS;
-          contentType?: keyof typeof CodeContentGenerator.CONTENT_TYPES;
-          includeTests?: boolean;
-          topics?: string[];
-        } = {}
-      ) {
-        // Get and load repos
-        const relevantRepos = getReposByLanguage(language);
-        const topicRepos = options.topics 
-          ? options.topics.flatMap(topic => getReposByTopic(topic))
-          : [];
-    
-        const allRepos = [...new Set([...relevantRepos, ...topicRepos])];
-    
-        // Load and analyze repository content
-        const repoContents = await Promise.all(
-          allRepos.map(async repo => {
-            try {
-              const loader = new EnhancedGithubLoader(repo.url, {
-                branch: "main",
-                maxConcurrency: 5,
-                maxFileSize: 1000000
-              });
-              const docs = await loader.load();
-              return {
-                repo,
-                content: docs,
-                success: true
-              };
-            } catch (error) {
-              console.error(`Failed to load ${repo.url}:`, error);
-              return {
-                repo,
-                content: [],
-                success: false
-              };
-            }
-          })
-        );
-    
-        // Extract relevant patterns from successful loads
-        const relevantCode = await this.extractRelevantCode(
-          repoContents
-            .filter(r => r.success)
-            .flatMap(r => r.content),
-          topic
-        );
-    
-        // Generate code using the extracted patterns
-        const generationPrompt = {
-          role: "system",
-          content: `Generate ${language} code using these real-world patterns and examples from successful repositories.`,
-          functions: [
-            {
-              name: "generate_code_content",
-              description: "Generates code content using repository examples",
-              parameters: {
-                type: "object",
-                properties: {
-                  mainContent: {
-                    type: "object",
-                    properties: {
-                      implementations: {
-                        type: "array",
-                        items: {
-                          type: "object",
-                          properties: {
-                            code: { type: "string" },
-                            explanation: { type: "string" },
-                            sourcePatterns: { 
-                              type: "array", 
-                              items: { type: "string" }
-                            }
-                          }
-                        }
-                      },
-                      tests: {
-                        type: "array",
-                        items: {
-                          type: "object",
-                          properties: {
-                            code: { type: "string" },
-                            description: { type: "string" }
-                          }
-                        }
-                      }
-                    }
-                  }
-                },
-                required: ["mainContent"]
-              }
-            }
-          ]
-        };
-    
-        const userPrompt = {
-          role: "user",
-          content: `Generate ${language} implementation for: ${topic}
-    
-    Found Code Patterns:
-    ${JSON.stringify(relevantCode.usefulPatterns, null, 2)}
-    
-    Relevant Code Examples:
-    ${relevantCode.relevantSnippets.map((snippet: { purpose: any; code: any; }) => 
-      `Purpose: ${snippet.purpose}\nCode:\n${snippet.code}\n`
-    ).join('\n')}
-    
-    Requirements:
-    - Use the discovered patterns and examples
-    - Adapt the patterns to the specific use case
-    - Follow the same code style and practices
-    - Include similar error handling approaches
-    - Match the quality level of the examples
-    - Generate tests similar to the repository tests
-    
-    Difficulty: ${options.difficulty || 'INTERMEDIATE'}`
-        };
-    
-        try {
-          const groq = await initializeGroq();
-          const completion = await groq?.chat.completions.create({
-            messages: [
-              { role: "system", content: generationPrompt.content },
-              { role: "user", content: userPrompt.content }
-            ],
-            model: "llama-3.2-90b-vision-preview",
-            temperature: 0.3,
-            functions: generationPrompt.functions,
-            function_call: { name: "generate_code_content" }
-          });
-    
-          const result = JSON.parse(
-            completion?.choices[0]?.message?.function_call?.arguments || "{}"
-          );
-    
-          // Return final result with metadata about used patterns
-          return {
-            ...result,
-            metadata: {
-              language,
-              patternsUsed: relevantCode.usefulPatterns,
-              sourceRepos: repoContents
-                .filter(r => r.success)
-                .map(r => ({
-                  name: r.repo.name,
-                  url: r.repo.url,
-                  stars: r.repo.stars
-                })),
-              generatedAt: new Date().toISOString()
-            }
-          };
-    
-        } catch (error) {
-          console.error(`Failed to generate ${language} content:`, error);
-          throw new Error(`Code generation failed: ${error}`);
+
+  static async vectorSearch(
+    collection: any,
+    query: string,
+    filter: any,
+    limit: number = 2
+  ) {
+      const vectorStore = new MongoDBAtlasVectorSearch(
+        new OpenAIEmbeddings({
+          openAIApiKey: process.env.OPENAI_API_KEY,
+          modelName: "text-embedding-3-small"
+        }),
+        {
+          collection,
+          indexName: "code_vector_index",
+          textKey: "content",
+          embeddingKey: "embedding",
         }
-      }
-    private static assessComplexity(code: any[]): 'LOW' | 'MEDIUM' | 'HIGH' {
-      // Simple complexity assessment based on code characteristics
-      const metrics = {
-        totalLines: 0,
-        functionsCount: 0,
-        nestedDepth: 0
-      };
+      );
   
-      code.forEach(file => {
-        const content = file.content;
-        metrics.totalLines += content.split('\n').length;
-        metrics.functionsCount += (content.match(/function/g) || []).length;
-        metrics.nestedDepth = Math.max(
-          metrics.nestedDepth,
-          Math.max(...content.split('\n').map((line: { match: (arg0: RegExp) => (string | any[])[]; }) => 
-            (line.match(/^\s+/)?.[0]?.length || 0) / 2
-          ))
-        );
-      });
-  
-      if (metrics.totalLines > 200 || metrics.nestedDepth > 4) return 'HIGH';
-      if (metrics.totalLines > 100 || metrics.nestedDepth > 2) return 'MEDIUM';
-      return 'LOW';
+      const results = await vectorStore.similaritySearch(query, limit, filter);
+      
+      // Trim each result to reduce token consumption
+      return results.map(doc => ({
+        ...doc,
+        pageContent: this.trimContent(doc.pageContent, TOKEN_LIMITS.SEARCH_RESULTS / limit)
+      }));
     }
+  
+    private static trimContent(content: string, maxTokens: number): string {
+      // Rough approximation: 1 token ≈ 4 characters
+      const maxChars = maxTokens * 4;
+      if (content.length <= maxChars) return content;
+      
+      // Keep the first part of the content that's most relevant
+      return content.substring(0, maxChars) + "...";
+    }
+
+  static async generateLearningPath(
+    topic: string,
+    difficulty: string
+  ): Promise<LearningObjective[]> {
+    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
+    
+    const prompt = `Create a detailed learning path for: ${topic}
+    Difficulty: ${difficulty}
+    
+    Return a JSON array of learning objectives with this structure:
+    [
+      {
+        "concept": "string",
+        "difficulty": "beginner|intermediate|advanced",
+        "prerequisites": ["string"],
+        "outcomes": ["string"]
+      }
+    ]
+    
+    Make it comprehensive but achievable. RETURN ONLY THE JSON!`;
+
+    const completion = await groq.chat.completions.create({
+      messages: [{ role: "user", content: prompt }],
+      model: "llama-3.2-11b-vision-preview",
+      temperature: 0.3,
+    });
+
+    return JSON.parse(completion.choices[0]?.message?.content || "[]");
   }
 
+// Modify the synthesizeCode method to handle non-JSON responses
+static async synthesizeCode(
+  examples: CodeExample[],
+  patterns: CodePattern[],
+  learningPath: LearningObjective[],
+  language: SupportedLanguage,
+  difficulty: string
+): Promise<string> {
+  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
+  
+  const synthesisPrompt = `Generate educational ${language} code that demonstrates these patterns and concepts.
+
+Context:
+${JSON.stringify({patterns, concepts: learningPath})}
+
+Requirements:
+1. Return ONLY the code with comments
+2. DO NOT wrap in JSON or code blocks
+3. DO NOT include any explanatory text
+4. Follow ${language} best practices
+5. Include error handling for ${difficulty} level
+6. Add comprehensive comments
+
+Reference Examples:
+${examples.map(e => e.code).join('\n\n')}`;
+
+  const completion = await groq.chat.completions.create({
+    messages: [
+      {
+        role: "system",
+        content: "You are a code generator. Return ONLY the code without any formatting or explanation."
+      },
+      { role: "user", content: synthesisPrompt }
+    ],
+    model: "llama-3.2-90b-vision-preview",
+    temperature: 0.2
+  });
+
+  return completion.choices[0]?.message?.content || "";
+}
+
+  static async generateEducationalCode(
+    topic: string,
+    language: SupportedLanguage,
+    options: {
+      difficulty: 'BEGINNER' | 'INTERMEDIATE' | 'ADVANCED';
+      includeTests?: boolean;
+    }
+  ): Promise<string> {
+    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
+
+    // Generate code with strict length limits
+    const codePrompt = `Generate ${language} code for ${topic}. Requirements:
+1. Maximum ${TOKEN_LIMITS.CODE_OUTPUT} characters
+2. Focus on core functionality
+3. Include essential comments only
+4. Difficulty: ${options.difficulty}
+5. NO explanatory text, ONLY code
+6. Include error handling
+`;
+
+    const completion = await groq.chat.completions.create({
+      messages: [
+        {
+          role: "system",
+          content: "You are a code generator. Return ONLY the code, no explanations."
+        },
+        { role: "user", content: codePrompt }
+      ],
+      model: "llama-3.2-90b-vision-preview",
+      temperature: 0.2,
+      max_tokens: TOKEN_LIMITS.CODE_OUTPUT / 4
+    });
+
+    return completion.choices[0]?.message?.content || "";
+  }
+
+}
+
 export class LanguageDetector {
-    // Language metadata with typical use cases and identifiers
     private static readonly LANGUAGE_METADATA = {
       javascript: {
         keywords: ["web", "frontend", "browser", "node", "react", "vue", "angular", "dom", "npm", "express"],
@@ -273,184 +216,45 @@ export class LanguageDetector {
         domains: ["data science", "machine learning", "web backend", "automation", "scripting"],
         frameworks: ["Django", "Flask", "FastAPI", "NumPy", "Pandas"],
         typical_tasks: ["data analysis", "ML models", "APIs", "automation", "scientific"]
-      },
-      java: {
-        keywords: ["spring", "enterprise", "android", "jvm", "maven", "gradle", "jdbc", "jakarta"],
-        domains: ["enterprise", "android", "large systems", "microservices"],
-        frameworks: ["Spring", "Hibernate", "Android SDK"],
-        typical_tasks: ["enterprise apps", "Android apps", "microservices", "large systems"]
-      },
-      golang: {
-        keywords: ["go", "goroutines", "channels", "concurrent", "performance", "microservices"],
-        domains: ["systems", "cloud", "networking", "backend"],
-        frameworks: ["Gin", "Echo", "gRPC"],
-        typical_tasks: ["microservices", "CLI tools", "system tools", "high-performance"]
-      },
-      rust: {
-        keywords: ["memory-safe", "systems", "performance", "concurrent", "wasm", "cargo"],
-        domains: ["systems", "WebAssembly", "CLI", "performance-critical"],
-        frameworks: ["Tokio", "Rocket", "Actix"],
-        typical_tasks: ["CLI tools", "systems programming", "WebAssembly", "performance"]
       }
     } as const;
   
-    static async detectLanguage(topic: string): Promise<{
-      language: keyof typeof LanguageDetector.LANGUAGE_METADATA;
-      confidence: number;
-      reasoning: string;
-      suggestedFrameworks: string[];
-      alternatives: string[];
-    }> {
-      const prompt = {
-        role: "system",
-        content: "Analyze the programming topic and determine the most appropriate programming language.",
-        functions: [
-          {
-            name: "detect_language",
-            description: "Determines the most suitable programming language for a topic",
-            parameters: {
-              type: "object",
-              properties: {
-                language: {
-                  type: "string",
-                  enum: Object.keys(this.LANGUAGE_METADATA),
-                  description: "The most appropriate programming language"
-                },
-                confidence: {
-                  type: "number",
-                  description: "Confidence score between 0 and 1"
-                },
-                reasoning: {
-                  type: "string",
-                  description: "Explanation for the language choice"
-                },
-                suggestedFrameworks: {
-                  type: "array",
-                  items: { type: "string" },
-                  description: "Recommended frameworks for this topic"
-                },
-                alternatives: {
-                  type: "array",
-                  items: { 
-                    type: "string",
-                    enum: Object.keys(this.LANGUAGE_METADATA)
-                  },
-                  description: "Alternative languages that could work well"
-                },
-                domainFocus: {
-                  type: "array",
-                  items: { type: "string" },
-                  description: "Key domains this topic falls into"
-                }
-              },
-              required: ["language", "confidence", "reasoning"]
-            }
-          }
-        ]
-      };
-  
-      const userPrompt = {
-        role: "user",
-        content: `Analyze this programming topic and determine the most appropriate programming language: ${topic}
-  
-  Consider:
-  1. Required functionality and features
-  2. Performance characteristics needed
-  3. Ecosystem and library support
-  4. Industry standards and common practices
-  5. Development speed and maintainability
-  6. Team and deployment considerations
-  
-  Available Languages and their strengths:
-  ${Object.entries(this.LANGUAGE_METADATA)
-    .map(([lang, meta]) => `${lang}: ${meta.domains.join(', ')}`)
-    .join('\n')}`
-      };
-  
+    static async detectLanguage(topic: string) {
       try {
         const groq = await initializeGroq();
-        if (groq === null) {
-            throw new Error("Failed to initialize Groq");
-            }
+        if (!groq) throw new Error("Failed to initialize Groq");
+        
         const completion = await groq.chat.completions.create({
           messages: [
-            { role: "system", content: prompt.content },
-            { role: "user", content: userPrompt.content }
+            { role: "system", content: "Analyze the programming topic and determine the most appropriate language." },
+            { role: "user", content: `Topic: ${topic}` }
           ],
-          model: "llama-3.2-90b-vision-preview",
-          temperature: 0.3,
-          functions: prompt.functions,
-          function_call: { name: "detect_language" }
+          model: "llama-3.2-11b-vision-preview",
+          temperature: 0.3
         });
   
-        const result = JSON.parse(
-          completion.choices[0]?.message?.function_call?.arguments || "{}"
-        );
-  
-        // Enhance result with metadata
-        const languageInfo = this.LANGUAGE_METADATA[result.language as keyof typeof this.LANGUAGE_METADATA];
-        
-        return {
-          language: result.language,
-          confidence: result.confidence,
-          reasoning: result.reasoning,
-          suggestedFrameworks: result.suggestedFrameworks || languageInfo.frameworks,
-          alternatives: result.alternatives || [],
-          //@ts-ignore
-          metadata: {
-            domains: languageInfo.domains,
-            typicalTasks: languageInfo.typical_tasks,
-            ecosystem: {
-              frameworks: languageInfo.frameworks,
-              keywords: languageInfo.keywords
-            }
-          }
-        };
-  
+        const result = completion.choices[0]?.message?.content || "";
+        return this.enhanceResult(result as keyof typeof this.LANGUAGE_METADATA);
       } catch (error) {
         console.error("Language detection failed:", error);
-        
-        // Fallback to basic keyword matching
         const fallbackLanguage = this.fallbackDetection(topic);
-        
-        return {
-          language: fallbackLanguage,
-          confidence: 0.6,
-          reasoning: "Fallback detection based on keyword matching",
-          suggestedFrameworks: [...this.LANGUAGE_METADATA[fallbackLanguage].frameworks],
-          alternatives: Object.keys(this.LANGUAGE_METADATA) as Array<keyof typeof this.LANGUAGE_METADATA>,
-          //@ts-ignore
-          metadata: {
-            domains: this.LANGUAGE_METADATA[fallbackLanguage].domains,
-            typicalTasks: this.LANGUAGE_METADATA[fallbackLanguage].typical_tasks,
-            ecosystem: {
-              frameworks: this.LANGUAGE_METADATA[fallbackLanguage].frameworks,
-              keywords: this.LANGUAGE_METADATA[fallbackLanguage].keywords
-            }
-          }
-        };
+        return this.enhanceResult(fallbackLanguage);
       }
     }
   
     private static fallbackDetection(topic: string): keyof typeof LanguageDetector.LANGUAGE_METADATA {
       const topicLower = topic.toLowerCase();
       let maxMatches = 0;
-      let bestLanguage: keyof typeof this.LANGUAGE_METADATA = "javascript"; // Default fallback
+      let bestLanguage: keyof typeof this.LANGUAGE_METADATA = "javascript";
   
       for (const [language, metadata] of Object.entries(this.LANGUAGE_METADATA)) {
         let matches = 0;
-        
-        // Check keywords
         matches += metadata.keywords.filter(keyword => 
           topicLower.includes(keyword.toLowerCase())
-        ).length * 2; // Keywords are weighted more heavily
-  
-        // Check domains
+        ).length * 2;
         matches += metadata.domains.filter(domain => 
           topicLower.includes(domain.toLowerCase())
         ).length;
-  
-        // Check typical tasks
         matches += metadata.typical_tasks.filter(task => 
           topicLower.includes(task.toLowerCase())
         ).length;
@@ -460,7 +264,23 @@ export class LanguageDetector {
           bestLanguage = language as keyof typeof this.LANGUAGE_METADATA;
         }
       }
-  
       return bestLanguage;
     }
- }
+
+    private static enhanceResult(language: keyof typeof LanguageDetector.LANGUAGE_METADATA) {
+      const languageInfo = this.LANGUAGE_METADATA[language];
+      return {
+        language,
+        confidence: 0.8,
+        suggestedFrameworks: languageInfo?.frameworks || "Nextjs, Express, Nestjs, Django, Flask, FastAPI",
+        metadata: {
+          domains: languageInfo?.domains || "web development, data science, machine learning, automation",
+          typicalTasks: languageInfo?.typical_tasks || "building web applications, data analysis, machine learning models, automating tasks",
+          ecosystem: {
+            frameworks: languageInfo?.frameworks || ["Nextjs", "Express", "Nestjs", "Django", "Flask", "FastAPI"],
+            keywords: languageInfo?.keywords || ["web development", "data science", "machine learning", "automation"]
+          }
+        }
+      };
+    }
+}
