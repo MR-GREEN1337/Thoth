@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
  
-// Configure which paths require authentication
+// Configure which paths require authentication.
 const protectedPaths = [
   'dashboard',
   'course',
