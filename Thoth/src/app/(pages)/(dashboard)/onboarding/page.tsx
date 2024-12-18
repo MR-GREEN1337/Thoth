@@ -82,20 +82,20 @@ export default function OnboardingPage() {
   const analyzePreferences = async (includeExisting = false): Promise<void> => {
     setIsLoading(true);
     try {
+      const payload = {
+        userId,
+        preferences,
+        // Only include previous analysis and refinement notes if refining
+        ...(includeExisting && analysis?.analysis ? {
+          previousAnalysis: analysis.analysis,
+          refinementNotes
+        } : {})
+      };
+  
       const response = await fetch("/api/analyze-preferences", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId,
-          preferences:
-            preferences +
-            (includeExisting && analysis
-              ? `\n\nPrevious Analysis: ${JSON.stringify(
-                  analysis
-                )}\n\nRefinement Notes: ${refinementNotes}`
-              : ""),
-            analysis: analysis?.analysis,
-        }),
+        body: JSON.stringify(payload)
       });
       
       if (!response.ok) {
@@ -104,7 +104,9 @@ export default function OnboardingPage() {
       
       const data: PreferencesOutput = await response.json();
       setAnalysis(data);
-      if (data.isConcise) {
+      
+      // Only reset refinement UI if we get a valid analysis back
+      if (data.analysis) {
         setShowRefinement(false);
         setRefinementNotes("");
       }

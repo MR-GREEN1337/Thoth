@@ -1585,6 +1585,7 @@ const withRetry = async <T>(
 
   throw lastError;
 };
+
 class CourseGenerationError extends Error {
   constructor(
     message: string,

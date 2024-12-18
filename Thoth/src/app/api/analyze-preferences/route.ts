@@ -63,6 +63,29 @@ const RequestSchema = z.object({
   refinementNotes: z.optional(z.string()),
 });
 
+const withRetry = async <T>(
+  operation: () => Promise<T>,
+  retries: number = 3,
+  delay: number = 1000
+): Promise<T> => {
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error as Error;
+      if (attempt < retries - 1) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, delay * (attempt + 1))
+        );
+      }
+    }
+  }
+
+  throw lastError;
+};
+
 // Agent State and Implementation
 class LearningPathAgent {
   private static async getCompletion(prompt: string): Promise<string> {
@@ -97,7 +120,11 @@ class LearningPathAgent {
         : state.preferences;
 
       const searchQuery = `${refinementContext} career path learning roadmap requirements trends 2024`;
-      const results = await tavilyTool.invoke(searchQuery);
+      const results = await withRetry(
+        () => tavilyTool.invoke(searchQuery),
+        3,
+        1000
+      );
 
       console.log("Search results received:", results);
 
@@ -137,26 +164,24 @@ class LearningPathAgent {
 
   static async analyze(state: typeof AgentState.State) {
     try {
-      console.log(
-        "Starting analysis with search results:",
-        state.searchResults
-      );
-
+      console.log("Starting analysis with:", {
+        preferences: state.preferences,
+        hasRefinement: !!state.refinementNotes,
+        hasPreviousAnalysis: !!state.previousAnalysis
+      });
+  
       if (!state.searchResults.length) {
         return {
-          messages: [
-            new HumanMessage({ content: "No search results to analyze" }),
-          ],
+          messages: [new HumanMessage({ content: "No search results to analyze" })],
           analysis: {
             isConcise: true,
-            message:
-              "Unable to analyze without search results. Please try again.",
+            message: "Unable to analyze without search results. Please try again.",
             sourceUrls: [],
           },
           next: "FINISH",
         };
       }
-
+  
       const processedResults = state.searchResults
         .filter((result) => result && typeof result === "object")
         .map((result) => ({
@@ -164,85 +189,72 @@ class LearningPathAgent {
           snippet: (result.snippet || "").slice(0, 300),
         }))
         .slice(0, 5);
-
+  
+      // Build base prompt
       let analysisPrompt = `Analyze this learning goal: "${state.preferences}"
-    Based on market research: ${JSON.stringify(processedResults)}`;
-
+  Based on market research: ${JSON.stringify(processedResults)}`;
+  
+      // Add refinement context if available
       if (state.previousAnalysis && state.refinementNotes) {
-        analysisPrompt += `
-      Previous analysis: ${JSON.stringify(state.previousAnalysis)}
-      Refinement requests: ${state.refinementNotes}
-      Please adjust the previous analysis based on the refinement requests while maintaining consistency with the original preferences.`;
+        analysisPrompt += `\n\nPrevious analysis: ${JSON.stringify(state.previousAnalysis, null, 2)}
+  Refinement requests: ${state.refinementNotes}
+  
+  Please update the previous analysis based on these refinement requests while:
+  1. Maintaining consistency with the original preferences
+  2. Only modifying aspects mentioned in the refinement notes
+  3. Keeping the same structure but updating relevant values
+  4. Preserving any previous insights that aren't being refined`;
       }
-
-      analysisPrompt += `
-    Provide a detailed learning path analysis in JSON format. The response MUST include "isConcise": true and match this structure exactly:
-    {
-      "isConcise": true,
-      "analysis": {
-        "interests": [{
-          "name": string,
-          "category": "Learning Path" | "Technology" | "Skill",
-          "marketDemand": "High" | "Medium" | "Low",
-          "trendingTopics": string[],
-          "description": string
-        }],
-        "expertiseLevel": "BEGINNER" | "INTERMEDIATE" | "ADVANCED" | "EXPERT",
-        "suggestedWeeklyHours": number,
-        "marketInsights": {
-          "trends": string[],
-          "opportunities": string[]
-        },
-        "learningPath": {
-          "fundamentals": string[],
-          "intermediate": string[],
-          "advanced": string[],
-          "estimatedTimeMonths": number
-        }
+  
+      // Add response format instructions
+      analysisPrompt += `\n\nProvide a detailed learning path analysis in JSON format that matches this structure exactly:
+  {
+    "isConcise": true,
+    "analysis": {
+      "interests": [{
+        "name": string,
+        "category": "Learning Path" | "Technology" | "Skill",
+        "marketDemand": "High" | "Medium" | "Low",
+        "trendingTopics": string[],
+        "description": string
+      }],
+      "expertiseLevel": "BEGINNER" | "INTERMEDIATE" | "ADVANCED" | "EXPERT",
+      "suggestedWeeklyHours": number,
+      "marketInsights": {
+        "trends": string[],
+        "opportunities": string[]
+      },
+      "learningPath": {
+        "fundamentals": string[],
+        "intermediate": string[],
+        "advanced": string[],
+        "estimatedTimeMonths": number
       }
     }
-    
-    Important: Set "isConcise": true in the response. Do not set it to false.`;
-
+  }`;
+  
       const response = await this.getCompletion(analysisPrompt);
       console.log("Raw analysis response:", response);
-
+  
       const parsedAnalysis = this.safeJsonParse(response);
       console.log("Parsed analysis:", parsedAnalysis);
-
-      // Force isConcise to true if the analysis structure is valid
-      if (parsedAnalysis && parsedAnalysis.analysis) {
-        parsedAnalysis.isConcise = true;
-      }
-
+  
+      // Validate the analysis
       try {
-        // Validate the structure regardless of isConcise value
         const validatedAnalysis = {
           isConcise: true,
           analysis: AnalysisSchema.parse(parsedAnalysis.analysis),
           sourceUrls: state.sourceUrls || [],
         };
-
+  
         return {
-          messages: [
-            new HumanMessage({ content: "Analysis completed successfully" }),
-          ],
+          messages: [new HumanMessage({ content: "Analysis completed successfully" })],
           analysis: validatedAnalysis,
           next: "FINISH",
         };
       } catch (error) {
         console.error("Validation error:", error);
-        return {
-          messages: [
-            new HumanMessage({ content: "Analysis validation failed" }),
-          ],
-          analysis: {
-            isConcise: true,
-            message: "Failed to validate analysis results. Please try again.",
-            sourceUrls: state.sourceUrls || [],
-          },
-          next: "FINISH",
-        };
+        throw error; // Let the outer try-catch handle this
       }
     } catch (error) {
       console.error("Analysis error:", error);
@@ -257,6 +269,7 @@ class LearningPathAgent {
       };
     }
   }
+
   static async supervise(state: typeof AgentState.State) {
     console.log("Supervising state:", {
       hasSearchResults: state.searchResults.length > 0,
