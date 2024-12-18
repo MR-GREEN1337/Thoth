@@ -4,7 +4,6 @@ src/
 │   │   ├── auth.ts
 │   │   ├── generate-ai-response.ts
 │   │   ├── generate-suggestion.ts
-│   │   ├── onboarding.ts
 │   │   └── preferences.ts
 │   ├── api
 │   │   ├── analyze-preferences
@@ -25,6 +24,9 @@ src/
 │   │       │   │   │   └── route.ts
 │   │       │   │   ├── messages
 │   │       │   │   │   └── route.ts
+│   │       │   │   ├── modules
+│   │       │   │   │   └── [moduleId]
+│   │       │   │   │       └── route.ts
 │   │       │   │   ├── publish
 │   │       │   │   │   └── route.ts
 │   │       │   │   └── route.ts
@@ -53,6 +55,7 @@ src/
 │   │       ├── course
 │   │       │   └── [courseId]
 │   │       │       ├── _components
+│   │       │       │   ├── AISuggestionsPanel.tsx
 │   │       │       │   ├── CourseChat.tsx
 │   │       │       │   ├── courseClient.tsx
 │   │       │       │   ├── CourseForkTree.tsx
@@ -130,7 +133,6 @@ src/
 │       ├── toggle.tsx
 │       └── tooltip.tsx
 ├── helpers
-│   ├── GithubRepoLoader.ts
 │   └── LanguageDetector.ts
 ├── hooks
 │   ├── use-community-courses.ts
@@ -149,4 +151,4 @@ src/
     ├── course.ts
     └── preferences.ts
 
-41 directories, 109 files
+43 directories, 109 files

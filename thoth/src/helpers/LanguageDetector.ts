@@ -64,7 +64,7 @@ export class CodeContentGenerator {
         }),
         {
           collection,
-          indexName: "code_vector_index",
+          indexName: "code_index",
           textKey: "content",
           embeddingKey: "embedding",
         }
@@ -159,31 +159,76 @@ ${examples.map(e => e.code).join('\n\n')}`;
   return completion.choices[0]?.message?.content || "";
 }
 
-  static async generateEducationalCode(
-    topic: string,
-    language: SupportedLanguage,
-    options: {
-      difficulty: 'BEGINNER' | 'INTERMEDIATE' | 'ADVANCED';
-      includeTests?: boolean;
-    }
-  ): Promise<string> {
-    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
+static async generateEducationalCode(
+  topic: string,
+  language: SupportedLanguage,
+  options: {
+    difficulty: 'BEGINNER' | 'INTERMEDIATE' | 'ADVANCED';
+    includeTests?: boolean;
+  }
+): Promise<string> {
+  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
 
-    // Generate code with strict length limits
-    const codePrompt = `Generate ${language} code for ${topic}. Requirements:
+  // Set up MongoDB connection
+  try {
+    if (!process.env.MONGODB_ATLAS_URI || !process.env.MONGODB_ATLAS_DB_NAME || !process.env.MONGODB_ATLAS_COLLECTION_NAME) {
+      throw new Error("MongoDB configuration is missing");
+    }
+
+    const { MongoClient } = require('mongodb');
+    const client = new MongoClient(process.env.MONGODB_ATLAS_URI);
+    await client.connect();
+
+    const db = client.db(process.env.MONGODB_ATLAS_DB_NAME);
+    const collection = db.collection(process.env.MONGODB_ATLAS_COLLECTION_NAME);
+
+    // Search for relevant code examples using vector search
+    const searchQuery = `${topic} ${language} programming examples`;
+    const languageFilter = { language: language.toLowerCase() };
+    const searchResults = await this.vectorSearch(
+      collection,
+      searchQuery,
+      languageFilter,
+      3 // Fetch top 3 most relevant examples
+    );
+
+    // Extract and format code examples from search results
+    const relevantExamples = searchResults.map(result => {
+      const content = result.pageContent;
+      return {
+        code: content,
+        source: result.metadata?.file_path || 'Unknown',
+        repo: result.metadata?.repo_name || 'Unknown'
+      };
+    });
+
+    // Enhance the code generation prompt with found examples
+    const examplesContext = relevantExamples
+      .map((ex, i) => `Example ${i + 1} (from ${ex.repo}):\n${ex.code}`)
+      .join('\n\n');
+
+    const codePrompt = `Generate ${language} code for ${topic}.
+
+Reference these existing implementations for context:
+${examplesContext}
+
+Requirements:
 1. Maximum ${TOKEN_LIMITS.CODE_OUTPUT} characters
 2. Focus on core functionality
 3. Include essential comments only
 4. Difficulty: ${options.difficulty}
 5. NO explanatory text, ONLY code
 6. Include error handling
-`;
+7. Follow patterns from the reference examples where appropriate
+8. Maintain consistent coding style with examples
+
+Generate code that builds upon these examples while meeting the specific requirements.`;
 
     const completion = await groq.chat.completions.create({
       messages: [
         {
           role: "system",
-          content: "You are a code generator. Return ONLY the code, no explanations."
+          content: "You are a code generator that synthesizes new code based on existing examples. Return ONLY the code, no explanations."
         },
         { role: "user", content: codePrompt }
       ],
@@ -192,9 +237,45 @@ ${examples.map(e => e.code).join('\n\n')}`;
       max_tokens: TOKEN_LIMITS.CODE_OUTPUT / 4
     });
 
-    return completion.choices[0]?.message?.content || "";
-  }
+    // Post-process the generated code to ensure it meets length limits
+    let generatedCode = completion.choices[0]?.message?.content || "";
+    if (generatedCode.length > TOKEN_LIMITS.CODE_OUTPUT) {
+      generatedCode = this.trimContent(generatedCode, TOKEN_LIMITS.CODE_OUTPUT / 4);
+    }
 
+    // Clean up MongoDB connection
+    await client.close();
+
+    return generatedCode;
+
+  } catch (error) {
+    console.error("Error in generateEducationalCode:", error);
+    
+    // Fallback to generate code without examples if vector search fails
+    const fallbackPrompt = `Generate ${language} code for ${topic}. Requirements:
+1. Maximum ${TOKEN_LIMITS.CODE_OUTPUT} characters
+2. Focus on core functionality
+3. Include essential comments only
+4. Difficulty: ${options.difficulty}
+5. NO explanatory text, ONLY code
+6. Include error handling`;
+
+    const fallbackCompletion = await groq.chat.completions.create({
+      messages: [
+        {
+          role: "system",
+          content: "You are a code generator. Return ONLY the code, no explanations."
+        },
+        { role: "user", content: fallbackPrompt }
+      ],
+      model: "llama-3.2-90b-vision-preview",
+      temperature: 0.2,
+      max_tokens: TOKEN_LIMITS.CODE_OUTPUT / 4
+    });
+
+    return fallbackCompletion.choices[0]?.message?.content || "";
+  }
+}
 }
 
 export class LanguageDetector {

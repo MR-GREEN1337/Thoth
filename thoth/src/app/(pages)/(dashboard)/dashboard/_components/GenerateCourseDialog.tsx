@@ -33,7 +33,7 @@ const GenerateCourseDialog = ({
   const [isGenerating, setIsGenerating] = useState(false);
   const [courseIdea, setCourseIdea] = useState('');
   const [inputError, setInputError] = useState('');
-  const [countdown, setCountdown] = useState(25);
+  const [countdown, setCountdown] = useState(5);
   const [showCountdown, setShowCountdown] = useState(false);
 
   const steps = [

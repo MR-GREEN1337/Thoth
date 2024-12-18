@@ -138,7 +138,7 @@ export default function SignInPage() {
               <p className="text-sm text-gray-400">
                 Don't have an account?{" "}
                 <Link href="/sign-up" className="text-blue-400 hover:text-blue-300">
-                  Join the knowledge evolution
+                  Sign up
                 </Link>
               </p>
             </CardFooter>
